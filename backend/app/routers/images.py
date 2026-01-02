@@ -1,19 +1,42 @@
 from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, BackgroundTasks, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from sqlalchemy.orm import selectinload, attributes
+from sqlalchemy.orm import selectinload
 from typing import List, Optional
 from datetime import date
 
 from app.db.database import get_db, SessionLocal
 from app.models.image import Image, Tag
 from app.models.user import User
-from app.schemas.image import ImageResponse, ImageUpdate
+from app.schemas.image import ImageResponse, ImageUpdate, BatchDeleteRequest
 from app.services.image_service import process_upload, delete_image_files, analyze_image_with_ai
 from app.core.config import settings
 from app.routers.auth import get_current_user
-from app.models.image import Image, Tag
+
 router = APIRouter()
+
+# --- 批量删除接口 (已修复为异步) ---
+@router.post("/batch-delete")
+async def batch_delete_images(
+    req: BatchDeleteRequest,
+    db: AsyncSession = Depends(get_db), # 使用 AsyncSession
+    current_user: User = Depends(get_current_user)
+):
+    # 【关键修改】使用 user_id 而非 owner_id，并使用 await 执行查询
+    stmt = select(Image).where(Image.user_id == current_user.id).where(Image.id.in_(req.ids))
+    result = await db.execute(stmt)
+    images = result.scalars().all()
+    
+    count = 0
+    for img in images:
+        # 物理删除文件
+        delete_image_files(img.file_path, img.thumbnail_path)
+        # 数据库删除 (异步)
+        await db.delete(img)
+        count += 1
+        
+    await db.commit()
+    return {"message": f"Successfully deleted {count} images"}
 
 # --- 辅助函数：AI 后台任务 ---
 async def background_ai_analysis(image_id: int, file_path: str):
@@ -26,7 +49,7 @@ async def background_ai_analysis(image_id: int, file_path: str):
 
     async with SessionLocal() as db:
         try:
-            # 调用 AI 服务 (image_service.py 中定义的)
+            # 调用 AI 服务
             description = await analyze_image_with_ai(file_path, settings.SILICONFLOW_API_KEY)
             
             if description:
@@ -35,8 +58,6 @@ async def background_ai_analysis(image_id: int, file_path: str):
                 img = result.scalars().first()
                 if img:
                     img.ai_description = description
-                    # 这里简化处理：如果 AI 返回了特定格式，也可以自动添加 Tag
-                    # 例如：if "风景" in description: ...
                     await db.commit()
                     print(f"AI Analysis complete for Image {image_id}")
         except Exception as e:
@@ -83,11 +104,10 @@ async def upload_image(
     db.add(new_image)
     await db.commit()
     
-    # 【关键修改】替代 db.refresh(new_image)
-    # 重新查询图片，并显式加载 tags 关系，防止 Pydantic 读取时触发 MissingGreenlet 错误
+    # 重新查询图片，并显式加载 tags 关系
     stmt = (
         select(Image)
-        .options(selectinload(Image.tags))  # <--- 预加载 tags
+        .options(selectinload(Image.tags))
         .where(Image.id == new_image.id)
     )
     result = await db.execute(stmt)
@@ -110,7 +130,7 @@ async def get_images(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    # 构建查询语句，预加载 tags 防止 N+1 问题
+    # 构建查询语句，预加载 tags
     stmt = (
         select(Image)
         .where(Image.user_id == current_user.id)
@@ -159,14 +179,14 @@ async def delete_image(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    # 1. 查询图片 (确保属于当前用户)
+    # 1. 查询图片
     result = await db.execute(select(Image).where(Image.id == image_id, Image.user_id == current_user.id))
     image = result.scalars().first()
     
     if not image:
         raise HTTPException(status_code=404, detail="Image not found")
     
-    # 2. 删除物理文件 (调用 service 层)
+    # 2. 删除物理文件
     delete_image_files(image.file_path, image.thumbnail_path)
     
     # 3. 删除数据库记录
@@ -194,7 +214,7 @@ async def update_image_info(
     if not image:
         raise HTTPException(status_code=404, detail="Image not found")
 
-    # 2. 更新标签 (如果前端传了 custom_tags)
+    # 2. 更新标签
     if update_data.custom_tags is not None:
         new_tag_list = []
         for tag_name in update_data.custom_tags:
@@ -202,7 +222,7 @@ async def update_image_info(
             if not tag_name: 
                 continue
                 
-            # 查找标签是否存在，不存在则创建
+            # 查找标签是否存在
             tag_res = await db.execute(select(Tag).where(Tag.name == tag_name))
             tag = tag_res.scalars().first()
             if not tag:
@@ -210,7 +230,7 @@ async def update_image_info(
                 db.add(tag)
             new_tag_list.append(tag)
         
-        # 更新关系 (SQLAlchemy 会自动处理中间表)
+        # 更新关系
         image.tags = new_tag_list
         
     await db.commit()

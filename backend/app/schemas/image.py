@@ -31,3 +31,6 @@ class ImageResponse(ImageBase):
 
 class ImageUpdate(BaseModel):
     custom_tags: List[str] = [] # 仅接收标签名列表
+
+class BatchDeleteRequest(BaseModel):
+    ids: List[int]
