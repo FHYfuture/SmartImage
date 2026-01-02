@@ -12,23 +12,30 @@ os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
 os.makedirs(settings.THUMBNAIL_DIR, exist_ok=True)
 
 def _get_exif_data(image: PILImage.Image):
-    """提取原始 EXIF 数据并转换为字典"""
+    """解析 EXIF 数据 (增加健壮性检查)"""
     exif_data = {}
-    # 注意：_getexif() 是私有方法，仅针对 Jpeg/Tiff 有效
-    info = image._getexif()
-    if info:
-        for tag, value in info.items():
-            decoded = TAGS.get(tag, tag)
-            if decoded == "GPSInfo":
-                gps_data = {}
-                for t in value:
-                    sub_decoded = GPSTAGS.get(t, t)
-                    gps_data[sub_decoded] = value[t]
-                exif_data[decoded] = gps_data
-            else:
-                exif_data[decoded] = value
+    
+    # 【关键修改】先检查是否有 _getexif 方法 (PNG 等格式没有此方法)
+    if not hasattr(image, '_getexif'):
+        return exif_data
+        
+    try:
+        info = image._getexif()
+        if info:
+            for tag, value in info.items():
+                decoded = TAGS.get(tag, tag)
+                if decoded == "GPSInfo":
+                    gps_data = {}
+                    for t in value:
+                        sub_decoded = GPSTAGS.get(t, t)
+                        gps_data[sub_decoded] = value[t]
+                    exif_data[decoded] = gps_data
+                else:
+                    exif_data[decoded] = value
+    except Exception as e:
+        print(f"EXIF extract error: {e}")
+        
     return exif_data
-
 def _convert_to_degrees(value):
     """
     辅助函数：将 EXIF 中的 (度, 分, 秒) 格式转为浮点数

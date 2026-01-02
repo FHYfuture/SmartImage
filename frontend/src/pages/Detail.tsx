@@ -48,16 +48,20 @@ export default function Detail() {
   const handleSaveCrop = () => {
     const cropper = cropperRef.current?.cropper;
     if (cropper) {
+      // 添加 'image/jpeg' 参数，强制输出 JPG 格式
       cropper.getCroppedCanvas().toBlob(async (blob) => {
         if (!blob) return;
         const formData = new FormData();
-        formData.append('file', blob, `edited_${data.filename}`);
+        // 确保文件名后缀也是 .jpg
+        const filename = data.filename.replace(/\.[^/.]+$/, "") + ".jpg"; 
+        formData.append('file', blob, `edited_${filename}`);
+        
         Toast.show({ icon: 'loading', content: '保存新图片...' });
         await request.post('/images/upload', formData);
         Toast.show('成功');
         setIsEditing(false);
-        navigate('/home');
-      });
+        navigate('/home'); // 或者 navigate(0) 刷新当前页
+      }, 'image/jpeg', 0.9); // 第二个参数指定格式，第三个参数指定质量(0-1)
     }
   };
 
