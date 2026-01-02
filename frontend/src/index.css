@@ -1,0 +1,96 @@
+:root {
+  --max-content-width: 1200px;
+  --bg-color: #f7f8fa; /* 高级灰背景 */
+  --card-bg: #ffffff;
+  --primary-color: #1677ff;
+  
+  /* 阴影系统 */
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+  
+  /* 动画 */
+  --transition-base: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  background-color: var(--bg-color);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  color: #333;
+  -webkit-font-smoothing: antialiased;
+}
+
+#root {
+  width: 100%;
+  min-height: 100vh;
+}
+
+/* 响应式容器 */
+.responsive-container {
+  width: 100%;
+  max-width: var(--max-content-width);
+  margin: 0 auto;
+  min-height: 100vh;
+  position: relative;
+  background-color: transparent; /* 让背景透出来 */
+}
+
+/* === 核心：纯 CSS 瀑布流布局 === */
+.masonry-grid {
+  column-count: 2; /* 手机默认 2 列 */
+  column-gap: 16px;
+  padding: 12px;
+}
+
+/* 图片卡片样式 */
+.image-card {
+  break-inside: avoid; /* 防止图片被切断 */
+  margin-bottom: 16px;
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--card-bg);
+  box-shadow: var(--shadow-sm);
+  transition: var(--transition-base);
+  cursor: pointer;
+  position: relative;
+  border: 1px solid rgba(0,0,0,0.02);
+}
+
+.image-card img {
+  width: 100%;
+  display: block;
+  transition: transform 0.5s ease;
+}
+
+/* 悬停效果 (仅 PC) */
+@media (hover: hover) {
+  .image-card:hover {
+    transform: translateY(-4px);
+    box-shadow: var(--shadow-lg);
+  }
+  .image-card:hover img {
+    transform: scale(1.02); /* 微放大 */
+  }
+}
+
+/* PC 端适配：更多列 */
+@media (min-width: 768px) {
+  .masonry-grid {
+    column-count: 3;
+  }
+}
+@media (min-width: 1024px) {
+  .masonry-grid {
+    column-count: 4;
+  }
+}
+
+/* 毛玻璃导航栏 */
+.glass-nav {
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-top: 1px solid rgba(0,0,0,0.05);
+}
