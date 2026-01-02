@@ -57,6 +57,44 @@ export default function Detail() {
     } catch (e) {}
   };
 
+  // --- 编辑器核心算法：强制适应屏幕并居中 ---
+  const fitToScreen = () => {
+    const cropper = cropperRef.current?.cropper;
+    if (!cropper) return;
+
+    // 1. 获取容器(手机屏幕区域)和画布(图片当前状态)的数据
+    const container = cropper.getContainerData();
+    const canvas = cropper.getCanvasData();
+    
+    if (!container || !canvas) return;
+
+    // 2. 计算长宽比
+    const containerRatio = container.width / container.height;
+    const canvasRatio = canvas.width / canvas.height;
+    
+    let newWidth, newHeight;
+    
+    // 3. 根据比例决定是“宽适配”还是“高适配”
+    if (canvasRatio > containerRatio) {
+      // 图片更宽 -> 宽度撑满，高度自适应
+      newWidth = container.width;
+      newHeight = container.width / canvasRatio;
+    } else {
+      // 图片更高 -> 高度撑满，宽度自适应
+      newHeight = container.height;
+      newWidth = container.height * canvasRatio;
+    }
+    
+    // 4. 计算绝对居中的坐标
+    const left = (container.width - newWidth) / 2;
+    const top = (container.height - newHeight) / 2;
+    
+    // 5. 强制应用参数 (Canvas 设为适应大小，CropBox 设为全选)
+    // setCanvasData 会忽略当前的 zoom 状态，直接设置物理尺寸，消除所有累积误差
+    cropper.setCanvasData({ left, top, width: newWidth, height: newHeight });
+    cropper.setCropBoxData({ left, top, width: newWidth, height: newHeight });
+  };
+
   // --- 编辑器操作 ---
   
   const resetEditor = () => {
@@ -65,28 +103,23 @@ export default function Detail() {
     setSaturate(100);
     setScaleX(1);
     setScaleY(1);
-    cropperRef.current?.cropper.reset();
-  };
-
-const handleRotate = (degree: number) => {
     const cropper = cropperRef.current?.cropper;
     if (cropper) {
+      cropper.reset();
+      // 重置后也强制执行一次适应，防止 Reset 回到奇怪的默认缩放
+      setTimeout(fitToScreen, 10); 
+    }
+  };
+
+  const handleRotate = (degree: number) => {
+    const cropper = cropperRef.current?.cropper;
+    if (cropper) {
+      // 1. 先清空裁剪框，防止旋转时 viewMode:1 的边界约束强迫图片放大
+      cropper.clear();
+      // 2. 旋转
       cropper.rotate(degree);
-      
-      // 1. 强制缩小图片以适应容器 (viewMode: 1 会限制最小缩放为 Fit 状态)
-      // 这样解决了“持续放大”的问题
-      cropper.zoomTo(0); 
-      
-      // 2. 将裁剪框设置为容器大小 (0,0 -> full width/height)
-      // viewMode: 1 会自动把这个框“压”到图片边缘，实现全选
-      // 这样避免了读取 canvasData 导致的计算循环
-      const containerData = cropper.getContainerData();
-      cropper.setCropBoxData({
-        left: 0,
-        top: 0,
-        width: containerData.width,
-        height: containerData.height
-      });
+      // 3. 重新计算并强制适应屏幕
+      fitToScreen();
     }
   };
 
@@ -109,26 +142,21 @@ const handleRotate = (degree: number) => {
     if (cropper) {
       Toast.show({ icon: 'loading', content: '处理图片中...', duration: 0 });
 
-      // 1. 获取裁剪后的 Canvas
       const sourceCanvas = cropper.getCroppedCanvas({ imageSmoothingQuality: 'high' });
       if (!sourceCanvas) return;
 
-      // 2. 创建新 Canvas 用于应用滤镜 (亮度/对比度等)
       const targetCanvas = document.createElement('canvas');
       targetCanvas.width = sourceCanvas.width;
       targetCanvas.height = sourceCanvas.height;
       const ctx = targetCanvas.getContext('2d');
 
       if (ctx) {
-        // 应用滤镜
         ctx.filter = `brightness(${brightness}%) contrast(${contrast}%) saturate(${saturate}%)`;
         ctx.drawImage(sourceCanvas, 0, 0);
 
-        // 3. 导出为 Blob
         targetCanvas.toBlob(async (blob) => {
           if (!blob) return;
           const formData = new FormData();
-          // 强制使用 .jpg 后缀
           const filename = (data.filename || 'image').replace(/\.[^/.]+$/, "") + ".jpg";
           formData.append('file', blob, `edited_${filename}`);
           
@@ -159,14 +187,12 @@ const handleRotate = (degree: number) => {
 
     return (
       <div style={{ height: '100vh', background: '#000', display: 'flex', flexDirection: 'column' }}>
-        {/* 顶部栏 */}
         <div style={{ padding: '12px 16px', display: 'flex', justifyContent: 'space-between', color: '#fff', alignItems: 'center', zIndex: 10 }}>
           <span onClick={() => setIsEditing(false)}><CloseOutline fontSize={24} /></span>
           <span style={{ fontSize: 16 }}>编辑图片</span>
           <span onClick={handleSaveCrop} style={{ color: '#1677ff' }}><CheckOutline fontSize={24} /></span>
         </div>
 
-        {/* 裁剪主区域 */}
         <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
           <Cropper
             src={imgUrl}
@@ -177,10 +203,11 @@ const handleRotate = (degree: number) => {
             viewMode={1}
             background={false}
             autoCropArea={1} 
+            // 初始化时也执行同样的适应逻辑
+            ready={fitToScreen}
           />
         </div>
 
-        {/* 底部工具栏 */}
         <div style={{ background: '#1a1a1a', paddingBottom: 'env(safe-area-inset-bottom)' }}>
           <div style={{ height: 120, padding: '16px 20px', color: '#fff' }}>
             {editTab === 'crop' ? (
@@ -245,7 +272,7 @@ const handleRotate = (degree: number) => {
     );
   }
 
-  // --- 正常详情模式 UI ---
+  // --- 正常详情模式 UI (保持不变) ---
   return (
     <div style={{ background: '#f5f5f5', minHeight: '100vh', paddingBottom: 50 }}>
       <NavBar onBack={() => navigate(-1)}>图片详情</NavBar>

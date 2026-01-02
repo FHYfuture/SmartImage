@@ -1,16 +1,19 @@
 import axios from 'axios';
 import { Toast } from 'antd-mobile';
 
-// 指向后端 API 地址
-// 在 WSL2 运行时，浏览器访问 localhost:8000 通常能自动转发到 WSL
-export const BASE_URL = 'http://localhost:8000/api';
-export const STATIC_URL = 'http://localhost:8000';
+// 【关键修改】
+// 1. API 基础路径改为 '/api' (配合 vite 代理)
+// 这样无论你是用 localhost 还是 192.168.x.x 访问，都会自动适配
+export const baseURL = '/api';
+
+// 2. 静态资源路径改为空字符串 (配合 vite 代理)
+// 这样图片路径会变成 /static/xxx.jpg，浏览器会自动拼上前缀
+export const STATIC_URL = ''; 
 
 const request = axios.create({
-  baseURL: BASE_URL,
-  timeout: 10000,
+  baseURL: baseURL,
+  timeout: 5000,
 });
-
 // 请求拦截：自动带 Token
 request.interceptors.request.use((config) => {
   const token = localStorage.getItem('token');
