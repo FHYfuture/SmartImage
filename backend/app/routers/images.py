@@ -12,7 +12,7 @@ from app.schemas.image import ImageResponse, ImageUpdate
 from app.services.image_service import process_upload, delete_image_files, analyze_image_with_ai
 from app.core.config import settings
 from app.routers.auth import get_current_user
-
+from app.models.image import Image, Tag
 router = APIRouter()
 
 # --- 辅助函数：AI 后台任务 ---
@@ -42,8 +42,6 @@ async def background_ai_analysis(image_id: int, file_path: str):
         except Exception as e:
             print(f"AI Analysis failed: {e}")
 
-# --- API 接口 ---
-
 @router.post("/upload", response_model=ImageResponse)
 async def upload_image(
     background_tasks: BackgroundTasks,
@@ -54,10 +52,10 @@ async def upload_image(
     if not file.content_type.startswith("image/"):
         raise HTTPException(400, "File must be an image")
 
-    # 1. 处理文件 (保存到硬盘, 提取 EXIF)
+    # 1. 处理文件
     metadata = await process_upload(file, current_user.id)
     
-    # 2. 创建数据库对象
+    # 2. 创建图片对象
     new_image = Image(
         user_id=current_user.id,
         filename=metadata["filename"],
@@ -68,18 +66,39 @@ async def upload_image(
         location=metadata["location"]
     )
     
+    # 3. 处理自动生成的标签 (EXIF Tags)
+    tag_objects = []
+    if metadata["auto_tags"]:
+        for tag_name in metadata["auto_tags"]:
+            # 查询标签是否存在
+            result = await db.execute(select(Tag).where(Tag.name == tag_name))
+            tag = result.scalars().first()
+            if not tag:
+                tag = Tag(name=tag_name)
+                db.add(tag)
+            tag_objects.append(tag)
+    
+    new_image.tags = tag_objects
+
     db.add(new_image)
     await db.commit()
-    await db.refresh(new_image)
     
-    # 3. 【关键修复】强制设置 tags 为空列表，防止 Pydantic 序列化时触发隐式查询报错
-    attributes.set_committed_value(new_image, "tags", [])
-
-    # 4. 添加后台任务：AI 分析
+    # 【关键修改】替代 db.refresh(new_image)
+    # 重新查询图片，并显式加载 tags 关系，防止 Pydantic 读取时触发 MissingGreenlet 错误
+    stmt = (
+        select(Image)
+        .options(selectinload(Image.tags))  # <--- 预加载 tags
+        .where(Image.id == new_image.id)
+    )
+    result = await db.execute(stmt)
+    loaded_image = result.scalars().first()
+    
+    # 4. AI 分析任务
     if settings.SILICONFLOW_API_KEY:
-        background_tasks.add_task(background_ai_analysis, new_image.id, new_image.file_path)
+        background_tasks.add_task(background_ai_analysis, loaded_image.id, loaded_image.file_path)
 
-    return new_image
+    return loaded_image
+
 
 @router.get("/", response_model=List[ImageResponse])
 async def get_images(
