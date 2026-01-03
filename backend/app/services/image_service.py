@@ -7,6 +7,10 @@ from geopy.geocoders import Nominatim
 import reverse_geocoder as rg
 from app.core.config import settings
 
+import base64
+import httpx
+import json
+import io
 # 确保目录存在
 os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
 os.makedirs(settings.THUMBNAIL_DIR, exist_ok=True)
@@ -286,8 +290,133 @@ def delete_image_files(file_path: str, thumbnail_path: str):
     except Exception as e:
         print(f"Error deleting files: {e}")
 
-async def analyze_image_with_ai(image_path: str, api_key: str):
-    """AI 分析占位符"""
-    import asyncio
-    await asyncio.sleep(1)
+async def analyze_image_with_ai(file_path: str, api_key: str):
+    """
+    调用云端视觉大模型分析图片内容。
+    """
+    if not api_key or not os.path.exists(file_path):
+        print("AI Analysis skipped: Missing API Key or file not found.")
+        return None
+
+    print(f"Starting AI analysis for: {file_path}...")
+
+    # 1. 图片预处理：压缩尺寸并转换为 Base64 (防止 Payload 过大导致 400 错误)
+    base64_image = ""
+    try:
+        with PILImage.open(file_path) as img:
+            # 转换为 RGB (防止 RGBA png 报错)
+            if img.mode in ("RGBA", "P"):
+                img = img.convert("RGB")
+            
+            # 缩放图片：限制最大边长为 1024px (足够 AI 识别，且大幅减小体积)
+            img.thumbnail((1024, 1024))
+            
+            # 保存到内存 buffer
+            buffered = io.BytesIO()
+            img.save(buffered, format="JPEG", quality=85)
+            
+            # 转 Base64
+            encoded_string = base64.b64encode(buffered.getvalue()).decode('utf-8')
+            base64_image = f"data:image/jpeg;base64,{encoded_string}"
+    except Exception as e:
+        print(f"Error processing/encoding image: {e}")
+        return None
+
+    # 2. 定义 Prompt
+    system_prompt = """
+    你是一个专业的图像分析助手。请分析用户提供的图片，并返回一个严格的 JSON 格式结果。
+    JSON 需要包含以下字段：
+    - "summary": 一句简短的中文描述，总结图片内容（不超过50字）。
+    - "scene_tags": 场景类标签列表（如：风景、城市、海滩、室内、夜景）。
+    - "object_tags": 主要物体/人物/动物标签列表（如：猫、狗、男人、女人、汽车、建筑）。
+    - "style_tags": 图片风格/氛围标签列表（如：复古、赛博朋克、阳光明媚、极简）。
+    
+    请确保返回的只是纯 JSON 字符串，不要包含 ```json ... ``` 这样的代码块标记。
+    """
+
+    # 3. 确认模型名称
+    # 建议尝试 'Qwen/Qwen2-VL-7B-Instruct' (免费/低价) 
+    # 或者 'deepseek-ai/deepseek-vl-7b-chat' (如果支持的话)
+    model_name = "Pro/Qwen/Qwen2.5-VL-7B-Instruct" 
+    
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
+    
+    payload = {
+        "model": model_name, 
+        "messages": [
+            {
+                "role": "system",
+                "content": system_prompt
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": base64_image
+                        }
+                    },
+                    {"type": "text", "text": "请分析这张图片。"}
+                ]
+            }
+        ],
+        "max_tokens": 512,
+        "temperature": 0.2
+    }
+
+    # 4. 发送请求
+    api_url = "https://api.siliconflow.cn/v1/chat/completions"
+    
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        try:
+            response = await client.post(api_url, headers=headers, json=payload)
+            
+            # 【调试关键】如果是 400 错误，打印服务器返回的具体原因
+            if response.status_code == 400:
+                print(f"❌ API 400 Error Details: {response.text}")
+            
+            response.raise_for_status() 
+            
+            result_json = response.json()
+            content = result_json['choices'][0]['message']['content'].strip()
+            
+            # 清理 Markdown 标记
+            if content.startswith("```json"):
+                content = content[7:]
+            if content.endswith("```"):
+                content = content[:-3]
+                
+            analysis_data = json.loads(content)
+            
+            # 合并标签
+            all_tags = set()
+            if isinstance(analysis_data.get("scene_tags"), list):
+                all_tags.update(analysis_data["scene_tags"])
+            if isinstance(analysis_data.get("object_tags"), list):
+                all_tags.update(analysis_data["object_tags"])
+            if isinstance(analysis_data.get("style_tags"), list):
+                all_tags.update(analysis_data["style_tags"])
+            
+            final_tags = [t for t in all_tags if isinstance(t, str) and t.strip()]
+
+            print(f"AI Analysis success. Tags: {final_tags}")
+            
+            return {
+                "summary": analysis_data.get("summary"),
+                "tags": final_tags
+            }
+
+        except httpx.HTTPStatusError as e:
+            print(f"AI API HTTP Error: {e.response.status_code} - {e.response.text}")
+        except httpx.RequestError as e:
+            print(f"AI API Connection Error: {e}")
+        except json.JSONDecodeError as e:
+            print(f"AI JSON Decode Error: {e}")
+        except Exception as e:
+            print(f"Unexpected Error: {e}")
+            
     return None

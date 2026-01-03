@@ -41,84 +41,148 @@ async def batch_delete_images(
 # --- 辅助函数：AI 后台任务 ---
 async def background_ai_analysis(image_id: int, file_path: str):
     """
-    后台任务：分析图片并更新数据库
+    后台任务：分析图片并更新数据库 (支持多标签)
     注意：这里通过 SessionLocal 创建新的数据库会话，因为请求上下文已结束
     """
     if not settings.SILICONFLOW_API_KEY:
+        print("AI API Key not set, skipping background analysis.")
         return
 
+    # 使用异步上下文管理器获取 session
     async with SessionLocal() as db:
         try:
-            # 调用 AI 服务
-            description = await analyze_image_with_ai(file_path, settings.SILICONFLOW_API_KEY)
+            # 1. 调用 AI 服务 (现在返回的是一个字典或 None)
+            ai_result = await analyze_image_with_ai(file_path, settings.SILICONFLOW_API_KEY)
             
-            if description:
-                # 重新查询图片
-                result = await db.execute(select(Image).where(Image.id == image_id))
+            if ai_result:
+                # 2. 重新查询图片，并预加载 tags
+                stmt = (
+                    select(Image)
+                    .options(selectinload(Image.tags))
+                    .where(Image.id == image_id)
+                )
+                result = await db.execute(stmt)
                 img = result.scalars().first()
+                
                 if img:
-                    img.ai_description = description
+                    # 3. 更新 AI 描述摘要
+                    img.ai_description = ai_result.get("summary")
+                    
+                    # 4. 处理 AI 生成的新标签
+                    new_tag_names = ai_result.get("tags", [])
+                    if new_tag_names:
+                        # 获取当前已有的标签名集合，避免重复添加
+                        current_tag_names = {t.name for t in img.tags}
+                        
+                        for tag_name in new_tag_names:
+                            tag_name = tag_name.strip()
+                            # 如果标签已存在于这张图片，跳过
+                            if not tag_name or tag_name in current_tag_names:
+                                continue
+                                
+                            # 检查标签是否在数据库中已存在
+                            tag_res = await db.execute(select(Tag).where(Tag.name == tag_name))
+                            tag = tag_res.scalars().first()
+                            
+                            # 如果不存在，创建新标签
+                            if not tag:
+                                tag = Tag(name=tag_name)
+                                db.add(tag)
+                                # 需要先 flush 以获取新创建标签的 ID，否则可能导致关联错误
+                                await db.flush() 
+                            
+                            # 将标签添加到图片关联中
+                            img.tags.append(tag)
+                            # 记录到当前集合，防止本次循环内重复
+                            current_tag_names.add(tag_name)
+
+                    # 5. 提交所有更改
                     await db.commit()
-                    print(f"AI Analysis complete for Image {image_id}")
+                    print(f"✅ AI Analysis complete and saved for Image ID {image_id}")
+                else:
+                   print(f"❌ Image ID {image_id} not found during background task.")
+            else:
+                print(f"⚠️ AI Analysis returned no results for Image ID {image_id}.")
+
         except Exception as e:
-            print(f"AI Analysis failed: {e}")
+            print(f"❌ AI Analysis background task failed: {e}")
+            # 出错时回滚，保持数据库一致性
+            await db.rollback()
 
-@router.post("/upload", response_model=ImageResponse)
-async def upload_image(
-    background_tasks: BackgroundTasks,
-    file: UploadFile = File(...),
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+@router.post("/{image_id}/analyze")
+async def analyze_image_endpoint(
+    image_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
-    if not file.content_type.startswith("image/"):
-        raise HTTPException(400, "File must be an image")
+    # 获取图片路径
+    stmt = select(Image).where(Image.id == image_id, Image.user_id == current_user.id)
+    result = await db.execute(stmt)
+    image = result.scalars().first()
+    
+    if not image:
+        raise HTTPException(status_code=404, detail="Image not found")
+        
+    if not settings.SILICONFLOW_API_KEY:
+        raise HTTPException(status_code=500, detail="API Key not configured")
 
-    # 1. 处理文件
-    metadata = await process_upload(file, current_user.id)
+    # 调用 Service 进行分析
+    ai_result = await analyze_image_with_ai(image.file_path, settings.SILICONFLOW_API_KEY)
     
-    # 2. 创建图片对象
-    new_image = Image(
-        user_id=current_user.id,
-        filename=metadata["filename"],
-        file_path=metadata["file_path"],
-        thumbnail_path=metadata["thumbnail_path"],
-        resolution=metadata["resolution"],
-        capture_time=metadata["capture_time"],
-        location=metadata["location"]
+    if not ai_result:
+        raise HTTPException(status_code=500, detail="AI Analysis failed")
+        
+    # 直接返回结果给前端，让前端去编辑
+    return ai_result
+
+
+@router.put("/{image_id}", response_model=ImageResponse)
+async def update_image_info(
+    image_id: int,
+    update_data: ImageUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    stmt = (
+        select(Image)
+        .where(Image.id == image_id, Image.user_id == current_user.id)
+        .options(selectinload(Image.tags))
     )
+    result = await db.execute(stmt)
+    image = result.scalars().first()
     
-    # 3. 处理自动生成的标签 (EXIF Tags)
-    tag_objects = []
-    if metadata["auto_tags"]:
-        for tag_name in metadata["auto_tags"]:
-            # 查询标签是否存在
-            result = await db.execute(select(Tag).where(Tag.name == tag_name))
-            tag = result.scalars().first()
+    if not image:
+        raise HTTPException(status_code=404, detail="Image not found")
+
+    # 更新 AI 描述
+    if update_data.ai_description is not None:
+        image.ai_description = update_data.ai_description
+
+    # 更新标签 (追加模式)
+    if update_data.custom_tags is not None:
+        new_tag_list = []
+        # 保留原有标签 (如果想要完全覆盖，可以去掉这行逻辑，视需求而定)
+        # 这里逻辑是：用户在前端提交的 tag 列表，我们把它们加入到图片中
+        
+        # 为了避免 bug，我们直接处理新增的
+        for tag_name in update_data.custom_tags:
+            tag_name = tag_name.strip()
+            if not tag_name: continue
+            
+            # 查重或创建
+            tag_res = await db.execute(select(Tag).where(Tag.name == tag_name))
+            tag = tag_res.scalars().first()
             if not tag:
                 tag = Tag(name=tag_name)
                 db.add(tag)
-            tag_objects.append(tag)
-    
-    new_image.tags = tag_objects
-
-    db.add(new_image)
+            
+            # 避免重复关联
+            if tag not in image.tags:
+                image.tags.append(tag)
+        
     await db.commit()
-    
-    # 重新查询图片，并显式加载 tags 关系
-    stmt = (
-        select(Image)
-        .options(selectinload(Image.tags))
-        .where(Image.id == new_image.id)
-    )
-    result = await db.execute(stmt)
-    loaded_image = result.scalars().first()
-    
-    # 4. AI 分析任务
-    if settings.SILICONFLOW_API_KEY:
-        background_tasks.add_task(background_ai_analysis, loaded_image.id, loaded_image.file_path)
-
-    return loaded_image
-
+    await db.refresh(image)
+    return image
 
 @router.get("/", response_model=List[ImageResponse])
 async def get_images(

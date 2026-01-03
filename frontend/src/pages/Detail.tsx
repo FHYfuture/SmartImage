@@ -2,7 +2,7 @@ import { useEffect, useState, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { 
   Image, Dialog, Toast, Input, Slider, Tabs, 
-  Grid, Divider
+  Grid, Divider, Button, TextArea, Modal, Space
 } from 'antd-mobile';
 import { 
   DeleteOutline, EditSOutline, EnvironmentOutline, ClockCircleOutline, 
@@ -19,10 +19,16 @@ export default function Detail() {
   const { id } = useParams();
   const navigate = useNavigate();
   const [data, setData] = useState<any>(null);
+  
+  // --- AI 编辑相关状态 ---
+  const [aiLoading, setAiLoading] = useState(false);
+  const [showAiModal, setShowAiModal] = useState(false);
+  const [tempAiDesc, setTempAiDesc] = useState('');
+  const [tempAiTags, setTempAiTags] = useState<string[]>([]);
+  
+  // --- 裁剪/修图状态 ---
   const [isEditing, setIsEditing] = useState(false);
   const cropperRef = useRef<ReactCropperElement>(null);
-  
-  // --- 编辑器状态 ---
   const [editTab, setEditTab] = useState<'crop' | 'adjust'>('crop');
   const [brightness, setBrightness] = useState(100);
   const [contrast, setContrast] = useState(100);
@@ -34,41 +40,97 @@ export default function Detail() {
     try {
       const res: any = await request.get(`/images/${id}`);
       setData(res);
-    } catch(e) {
-      Toast.show('获取详情失败');
-    }
+    } catch(e) { Toast.show('获取详情失败'); }
   };
 
   useEffect(() => { if (id) fetchDetail(); }, [id]);
 
-  const handleDelete = async () => {
-    const res = await Dialog.confirm({ content: '确定删除这张照片吗？' });
-    if (res) {
-      await request.delete(`/images/${id}`);
-      Toast.show('已删除');
-      navigate(-1);
+  // --- 1. AI: 调用分析接口 ---
+  const handleAnalyzeAi = async () => {
+    setAiLoading(true);
+    Toast.show({ icon: 'loading', content: 'AI 正在观察图片...', duration: 0 });
+    try {
+      // 调用只分析不保存的接口
+      const res: any = await request.post(`/images/${id}/analyze`);
+      Toast.clear();
+      
+      // 将结果存入临时状态，并打开编辑弹窗
+      setTempAiDesc(res.summary || '');
+      setTempAiTags(res.tags || []);
+      setShowAiModal(true);
+      
+    } catch (e) {
+      Toast.clear();
+      Toast.show('AI 分析失败，请检查 Key 或网络');
+    } finally {
+      setAiLoading(false);
     }
   };
 
-  // --- 新增：删除标签功能 ---
-  const handleRemoveTag = (tagName: string) => {
-    Dialog.confirm({
-      title: '移除标签',
-      content: `确定要移除标签“${tagName}”吗？`,
-      confirmText: '移除',
-      cancelText: '取消',
+  // --- 2. AI: 保存结果 (修改后提交) ---
+  const handleSaveAiResult = async () => {
+    try {
+      await request.put(`/images/${id}`, {
+        ai_description: tempAiDesc,
+        custom_tags: tempAiTags 
+      });
+      setShowAiModal(false);
+      Toast.show({ icon: 'success', content: 'AI 数据已保存' });
+      fetchDetail(); 
+    } catch (e) {
+      Toast.show('保存失败');
+    }
+  };
+
+  // 辅助：在弹窗里移除某个待保存的标签
+  const removeTempTag = (tag: string) => {
+    setTempAiTags(tempAiTags.filter(t => t !== tag));
+  };
+  
+  // 辅助：在弹窗里手动增加一个标签
+  const addTempTag = () => {
+     let val = '';
+     Dialog.confirm({
+      title: '补充标签',
+      content: (
+        <div style={{ marginTop: 8 }}>
+          <Input 
+            placeholder='输入标签名' 
+            style={{ border: '1px solid #eee', borderRadius: 4, padding: '4px 8px' }}
+            onChange={v => val = v}
+          />
+        </div>
+      ),
       onConfirm: async () => {
-        try {
-          await request.delete(`/images/${id}/tags/${tagName}`);
-          Toast.show('标签已移除');
-          fetchDetail(); // 刷新数据
-        } catch (e) {
-          Toast.show('移除失败');
+        if (val && !tempAiTags.includes(val)) {
+            setTempAiTags([...tempAiTags, val]);
         }
       }
     });
   };
 
+  // --- 基础功能: 删除图片 ---
+  const handleDelete = async () => {
+    const res = await Dialog.confirm({ content: '确定删除这张照片吗？' });
+    if (res) { await request.delete(`/images/${id}`); Toast.show('已删除'); navigate(-1); }
+  };
+
+  // --- 基础功能: 移除已有的数据库标签 ---
+  const handleRemoveTag = (tagName: string) => {
+    Dialog.confirm({
+      title: '移除标签',
+      content: `确定移除“${tagName}”吗？`,
+      onConfirm: async () => {
+        try {
+          await request.delete(`/images/${id}/tags/${tagName}`);
+          Toast.show('标签已移除');
+          fetchDetail();
+        } catch (e) { Toast.show('移除失败'); }
+      }
+    });
+  };
+
+  // --- 基础功能: 添加数据库标签 ---
   const handleAddTag = () => {
     let inputValue = '';
     Dialog.confirm({
@@ -87,11 +149,7 @@ export default function Detail() {
         if (!inputValue.trim()) { Toast.show('标签名不能为空'); return; }
         try {
           const currentTags = data.tags.map((t: any) => t.name);
-          // 简单的去重检查
-          if (currentTags.includes(inputValue)) {
-             Toast.show('标签已存在');
-             return;
-          }
+          if (currentTags.includes(inputValue)) { Toast.show('标签已存在'); return; }
           await request.put(`/images/${id}`, { custom_tags: [...currentTags, inputValue] });
           fetchDetail();
           Toast.show('标签已添加');
@@ -109,7 +167,7 @@ export default function Detail() {
     document.body.removeChild(link);
   };
 
-  // --- 编辑器相关逻辑 (保持不变) ---
+  // --- 编辑器核心逻辑 ---
   const fitToScreen = () => {
     const cropper = cropperRef.current?.cropper;
     if (!cropper) return;
@@ -175,7 +233,7 @@ export default function Detail() {
   if (!data) return <div style={{ padding: 50, textAlign: 'center', color: '#999' }}>加载中...</div>;
   const imgUrl = `${STATIC_URL}/${data.file_path}`;
 
-  // --- 编辑模式 UI ---
+  // --- 视图 1: 修图编辑器 ---
   if (isEditing) {
     const filterStyle = { filter: `brightness(${brightness}%) contrast(${contrast}%) saturate(${saturate}%)` };
     return (
@@ -217,7 +275,7 @@ export default function Detail() {
     );
   }
 
-  // --- 详情模式 UI ---
+  // --- 视图 2: 图片详情页 ---
   return (
     <div style={{ background: '#000', minHeight: '100vh', paddingBottom: 'env(safe-area-inset-bottom)' }}>
       {/* 沉浸式图片区 */}
@@ -265,17 +323,41 @@ export default function Detail() {
         </div>
 
         {/* AI 智能视界 */}
-        {data.ai_description && (
-          <div style={{ background: 'linear-gradient(135deg, #f0f5ff 0%, #ffffff 100%)', borderRadius: 16, padding: 16, marginBottom: 20, border: '1px solid #adc6ff' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+        <div style={{ 
+          background: 'linear-gradient(135deg, #f0f5ff 0%, #ffffff 100%)', 
+          borderRadius: 16, padding: 16, marginBottom: 20,
+          border: '1px solid #adc6ff'
+        }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <CompassOutline color='#1677ff' fontSize={18} />
               <span style={{ fontWeight: 'bold', color: '#1677ff', fontSize: 14 }}>AI 智能视界</span>
             </div>
-            <div style={{ color: '#444', fontSize: 14, lineHeight: 1.6, textAlign: 'justify' }}>{data.ai_description}</div>
+            {/* 生成按钮 (使用 ScanningOutline) */}
+            <Button 
+              size='mini' 
+              color='primary' 
+              fill='outline' 
+              loading={aiLoading}
+              onClick={handleAnalyzeAi}
+              style={{ fontSize: 12, padding: '2px 8px', borderRadius: 12 }}
+            >
+              <ScanningOutline /> {data.ai_description ? '重新生成' : '生成分析'}
+            </Button>
           </div>
-        )}
+          
+          {data.ai_description ? (
+            <div style={{ color: '#444', fontSize: 14, lineHeight: 1.6, textAlign: 'justify' }}>
+              {data.ai_description}
+            </div>
+          ) : (
+            <div style={{ color: '#999', fontSize: 12, fontStyle: 'italic' }}>
+              点击上方按钮，AI 将为您自动撰写图片描述并提取标签。
+            </div>
+          )}
+        </div>
 
-        {/* 智能标签 (支持删除) */}
+        {/* 智能标签 */}
         <div>
            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 12 }}>
              <TagOutline fontSize={16} color='#666' /> 
@@ -286,19 +368,14 @@ export default function Detail() {
               {data.tags.map((tag: any) => (
                 <div 
                   key={tag.id} 
-                  onClick={() => handleRemoveTag(tag.name)} // 点击触发删除
+                  onClick={() => handleRemoveTag(tag.name)}
                   style={{ 
                     background: '#fff', border: '1px solid #eee', padding: '6px 12px', borderRadius: 20,
                     fontSize: 13, color: '#333', boxShadow: '0 1px 2px rgba(0,0,0,0.02)',
                     cursor: 'pointer', transition: 'all 0.2s', userSelect: 'none'
                   }}
-                  onMouseDown={(e) => e.currentTarget.style.background = '#ffebeb'}
-                  onMouseUp={(e) => e.currentTarget.style.background = '#fff'}
-                  onTouchStart={(e) => e.currentTarget.style.background = '#ffebeb'}
-                  onTouchEnd={(e) => e.currentTarget.style.background = '#fff'}
                 >
                   {tag.name}
-                  {/* 可选：加个小叉号，这里为了保持胶囊风格简洁没加，点击即可 */}
                 </div>
               ))}
               <div onClick={handleAddTag} style={{ background: '#f0f5ff', color: '#1677ff', borderRadius: 20, padding: '6px 16px', fontSize: 13, fontWeight: 500, cursor: 'pointer', border: '1px dashed #adc6ff' }}>
@@ -306,9 +383,52 @@ export default function Detail() {
               </div>
            </div>
         </div>
-        
         <div style={{ height: 40 }} />
       </div>
+
+      {/* --- AI 结果编辑弹窗 --- */}
+      <Modal
+        visible={showAiModal}
+        title="确认 AI 分析结果"
+        content={
+          <div style={{ maxHeight: '60vh', overflowY: 'auto' }}>
+            <div style={{ fontSize: 14, fontWeight: 'bold', marginBottom: 8 }}>智能摘要</div>
+            <TextArea 
+              value={tempAiDesc} 
+              onChange={val => setTempAiDesc(val)} 
+              rows={3} 
+              style={{ border: '1px solid #eee', borderRadius: 8, padding: 8, background: '#f9f9f9', fontSize: 14 }}
+            />
+            
+            <div style={{ fontSize: 14, fontWeight: 'bold', marginTop: 16, marginBottom: 8 }}>检测到的标签</div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+              {tempAiTags.map((tag, idx) => (
+                <div key={idx} style={{ 
+                  background: '#e6f4ff', color: '#1677ff', padding: '4px 10px', 
+                  borderRadius: 16, fontSize: 12, display: 'flex', alignItems: 'center', gap: 4
+                }}>
+                  {tag}
+                  <CloseOutline onClick={() => removeTempTag(tag)} style={{ cursor: 'pointer' }} />
+                </div>
+              ))}
+              <div onClick={addTempTag} style={{ 
+                border: '1px dashed #999', padding: '4px 10px', borderRadius: 16, fontSize: 12, cursor: 'pointer' 
+              }}>+ 补充</div>
+            </div>
+          </div>
+        }
+        closeOnAction
+        onClose={() => setShowAiModal(false)}
+        actions={[
+          { key: 'cancel', text: '取消', style: { color: '#999' } },
+          { 
+            key: 'confirm', 
+            text: '保存入库', 
+            primary: true, // 修复：仅保留 primary，去掉 bold
+            onClick: handleSaveAiResult 
+          },
+        ]}
+      />
     </div>
   );
 }
