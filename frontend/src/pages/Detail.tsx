@@ -1,8 +1,8 @@
 import { useEffect, useState, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { 
-  Image, Tag, Dialog, Toast, Input, Slider, Tabs, 
-  Card, Grid, Divider, Button
+  Image, Dialog, Toast, Input, Slider, Tabs, 
+  Grid, Divider
 } from 'antd-mobile';
 import { 
   DeleteOutline, EditSOutline, EnvironmentOutline, ClockCircleOutline, 
@@ -42,7 +42,7 @@ export default function Detail() {
   useEffect(() => { if (id) fetchDetail(); }, [id]);
 
   const handleDelete = async () => {
-    const res = await Dialog.confirm({ content: '确定删除吗？' });
+    const res = await Dialog.confirm({ content: '确定删除这张照片吗？' });
     if (res) {
       await request.delete(`/images/${id}`);
       Toast.show('已删除');
@@ -50,7 +50,25 @@ export default function Detail() {
     }
   };
 
-  // 修复：使用 Dialog.confirm + Input 替代 Dialog.prompt
+  // --- 新增：删除标签功能 ---
+  const handleRemoveTag = (tagName: string) => {
+    Dialog.confirm({
+      title: '移除标签',
+      content: `确定要移除标签“${tagName}”吗？`,
+      confirmText: '移除',
+      cancelText: '取消',
+      onConfirm: async () => {
+        try {
+          await request.delete(`/images/${id}/tags/${tagName}`);
+          Toast.show('标签已移除');
+          fetchDetail(); // 刷新数据
+        } catch (e) {
+          Toast.show('移除失败');
+        }
+      }
+    });
+  };
+
   const handleAddTag = () => {
     let inputValue = '';
     Dialog.confirm({
@@ -69,6 +87,11 @@ export default function Detail() {
         if (!inputValue.trim()) { Toast.show('标签名不能为空'); return; }
         try {
           const currentTags = data.tags.map((t: any) => t.name);
+          // 简单的去重检查
+          if (currentTags.includes(inputValue)) {
+             Toast.show('标签已存在');
+             return;
+          }
           await request.put(`/images/${id}`, { custom_tags: [...currentTags, inputValue] });
           fetchDetail();
           Toast.show('标签已添加');
@@ -152,7 +175,7 @@ export default function Detail() {
   if (!data) return <div style={{ padding: 50, textAlign: 'center', color: '#999' }}>加载中...</div>;
   const imgUrl = `${STATIC_URL}/${data.file_path}`;
 
-  // --- 编辑模式 UI (保持不变) ---
+  // --- 编辑模式 UI ---
   if (isEditing) {
     const filterStyle = { filter: `brightness(${brightness}%) contrast(${contrast}%) saturate(${saturate}%)` };
     return (
@@ -194,153 +217,102 @@ export default function Detail() {
     );
   }
 
-  // --- 详情模式 UI (UI 升级版) ---
+  // --- 详情模式 UI ---
   return (
     <div style={{ background: '#000', minHeight: '100vh', paddingBottom: 'env(safe-area-inset-bottom)' }}>
-      {/* 1. 沉浸式图片区 */}
-      <div style={{ 
-        position: 'relative', height: '55vh', 
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        background: '#000'
-      }}>
-        {/* 顶部悬浮栏 */}
-        <div style={{ 
-          position: 'absolute', top: 0, left: 0, right: 0, padding: '12px 16px', 
-          display: 'flex', justifyContent: 'space-between', zIndex: 10,
-          background: 'linear-gradient(to bottom, rgba(0,0,0,0.6), transparent)'
-        }}>
-          <span onClick={() => navigate(-1)} style={{ color: '#fff', backdropFilter: 'blur(4px)', background: 'rgba(255,255,255,0.1)', borderRadius: '50%', width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <CloseOutline fontSize={18} />
-          </span>
+      {/* 沉浸式图片区 */}
+      <div style={{ position: 'relative', height: '55vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#000' }}>
+        <div style={{ position: 'absolute', top: 0, left: 0, right: 0, padding: '12px 16px', display: 'flex', justifyContent: 'space-between', zIndex: 10, background: 'linear-gradient(to bottom, rgba(0,0,0,0.6), transparent)' }}>
+          <span onClick={() => navigate(-1)} style={{ color: '#fff', backdropFilter: 'blur(4px)', background: 'rgba(255,255,255,0.1)', borderRadius: '50%', width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center' }}><CloseOutline fontSize={18} /></span>
           <div style={{ display: 'flex', gap: 12 }}>
-             <span onClick={handleDownload} style={{ color: '#fff', backdropFilter: 'blur(4px)', background: 'rgba(255,255,255,0.1)', borderRadius: '50%', width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <DownlandOutline fontSize={18} />
-            </span>
-            <span onClick={() => setIsEditing(true)} style={{ color: '#fff', backdropFilter: 'blur(4px)', background: 'rgba(255,255,255,0.1)', borderRadius: '50%', width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <EditSOutline fontSize={18} />
-            </span>
-            <span onClick={handleDelete} style={{ color: '#ff4d4f', backdropFilter: 'blur(4px)', background: 'rgba(255,255,255,0.1)', borderRadius: '50%', width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <DeleteOutline fontSize={18} />
-            </span>
+             <span onClick={handleDownload} style={{ color: '#fff', backdropFilter: 'blur(4px)', background: 'rgba(255,255,255,0.1)', borderRadius: '50%', width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center' }}><DownlandOutline fontSize={18} /></span>
+            <span onClick={() => setIsEditing(true)} style={{ color: '#fff', backdropFilter: 'blur(4px)', background: 'rgba(255,255,255,0.1)', borderRadius: '50%', width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center' }}><EditSOutline fontSize={18} /></span>
+            <span onClick={handleDelete} style={{ color: '#ff4d4f', backdropFilter: 'blur(4px)', background: 'rgba(255,255,255,0.1)', borderRadius: '50%', width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center' }}><DeleteOutline fontSize={18} /></span>
           </div>
         </div>
         <Image src={imgUrl} fit='contain' style={{ width: '100%', height: '100%' }} />
       </div>
 
-      {/* 2. 底部信息滑板 (科技感设计) */}
-      <div style={{ 
-        marginTop: -24, borderTopLeftRadius: 24, borderTopRightRadius: 24, 
-        background: '#f2f4f8', position: 'relative', zIndex: 5, padding: '24px 16px',
-        minHeight: '50vh', boxShadow: '0 -4px 20px rgba(0,0,0,0.1)'
-      }}>
+      {/* 底部信息滑板 */}
+      <div style={{ marginTop: -24, borderTopLeftRadius: 24, borderTopRightRadius: 24, background: '#f2f4f8', position: 'relative', zIndex: 5, padding: '24px 16px', minHeight: '50vh', boxShadow: '0 -4px 20px rgba(0,0,0,0.1)' }}>
         
-        {/* (1) 核心信息：时间与地点 (更紧凑、显示全称) */}
+        {/* 时间与地点 */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16, marginBottom: 20 }}>
-          {/* 地点 */}
           <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
-            <div style={{ 
-              background: '#e6f4ff', color: '#1677ff', borderRadius: 12, 
-              width: 40, height: 40, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 
-            }}>
-              <EnvironmentOutline fontSize={20} />
-            </div>
+            <div style={{ background: '#e6f4ff', color: '#1677ff', borderRadius: 12, width: 40, height: 40, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><EnvironmentOutline fontSize={20} /></div>
             <div style={{ flex: 1 }}>
                <div style={{ fontSize: 12, color: '#999', marginBottom: 2 }}>拍摄地点</div>
-               <div style={{ fontSize: 16, fontWeight: '600', color: '#333', lineHeight: 1.4 }}>
-                 {data.location || '无位置信息'}
-               </div>
+               <div style={{ fontSize: 16, fontWeight: '600', color: '#333', lineHeight: 1.4 }}>{data.location || '无位置信息'}</div>
             </div>
           </div>
-          
           <Divider style={{ margin: 0, borderColor: '#e0e0e0' }} />
-
-          {/* 时间 */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <div style={{ 
-              background: '#fff7e6', color: '#fa8c16', borderRadius: 12, 
-              width: 40, height: 40, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0
-            }}>
-              <ClockCircleOutline fontSize={20} />
-            </div>
+            <div style={{ background: '#fff7e6', color: '#fa8c16', borderRadius: 12, width: 40, height: 40, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><ClockCircleOutline fontSize={20} /></div>
             <div>
                <div style={{ fontSize: 12, color: '#999', marginBottom: 2 }}>拍摄时间</div>
-               <div style={{ fontSize: 16, fontWeight: '600', color: '#333' }}>
-                 {data.capture_time ? dayjs(data.capture_time).format('YYYY年MM月DD日 HH:mm') : '未知时间'}
-               </div>
+               <div style={{ fontSize: 16, fontWeight: '600', color: '#333' }}>{data.capture_time ? dayjs(data.capture_time).format('YYYY年MM月DD日 HH:mm') : '未知时间'}</div>
             </div>
           </div>
         </div>
 
-        {/* (2) 技术参数仪表盘 (科技感胶囊块) */}
+        {/* 技术参数 */}
         <div style={{ background: '#fff', borderRadius: 16, padding: 16, marginBottom: 20, boxShadow: '0 2px 8px rgba(0,0,0,0.02)' }}>
           <Grid columns={3} gap={12}>
-             <TechItem 
-               icon={<ScanningOutline />} 
-               label="分辨率" 
-               value={data.resolution || '-'} 
-             />
-             <TechItem 
-               icon={<PieOutline />} 
-               label="文件大小" 
-               value={data.resolution ? '4.2 MB' : '-'} // 模拟数据，如果有真实size请替换
-             />
-             <TechItem 
-               icon={<FileOutline />} 
-               label="格式" 
-               value={data.filename?.split('.').pop()?.toUpperCase() || 'JPG'} 
-             />
+             <TechItem icon={<ScanningOutline />} label="分辨率" value={data.resolution || '-'} />
+             <TechItem icon={<PieOutline />} label="文件大小" value={data.resolution ? '4.2 MB' : '-'} />
+             <TechItem icon={<FileOutline />} label="格式" value={data.filename?.split('.').pop()?.toUpperCase() || 'JPG'} />
           </Grid>
         </div>
 
-        {/* (3) AI 智能视界 (高亮样式) */}
+        {/* AI 智能视界 */}
         {data.ai_description && (
-          <div style={{ 
-            background: 'linear-gradient(135deg, #f0f5ff 0%, #ffffff 100%)', 
-            borderRadius: 16, padding: 16, marginBottom: 20,
-            border: '1px solid #adc6ff'
-          }}>
+          <div style={{ background: 'linear-gradient(135deg, #f0f5ff 0%, #ffffff 100%)', borderRadius: 16, padding: 16, marginBottom: 20, border: '1px solid #adc6ff' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
               <CompassOutline color='#1677ff' fontSize={18} />
               <span style={{ fontWeight: 'bold', color: '#1677ff', fontSize: 14 }}>AI 智能视界</span>
             </div>
-            <div style={{ color: '#444', fontSize: 14, lineHeight: 1.6, textAlign: 'justify' }}>
-              {data.ai_description}
-            </div>
+            <div style={{ color: '#444', fontSize: 14, lineHeight: 1.6, textAlign: 'justify' }}>{data.ai_description}</div>
           </div>
         )}
 
-        {/* (4) 智能标签云 */}
+        {/* 智能标签 (支持删除) */}
         <div>
            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 12 }}>
              <TagOutline fontSize={16} color='#666' /> 
              <span style={{ fontSize: 14, fontWeight: 'bold', color: '#666' }}>智能标签</span>
+             <span style={{ fontSize: 10, color: '#ccc', marginLeft: 'auto' }}>点击标签可移除</span>
            </div>
            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
               {data.tags.map((tag: any) => (
-                <div key={tag.id} style={{ 
-                  background: '#fff', border: '1px solid #eee', padding: '6px 12px', borderRadius: 20,
-                  fontSize: 13, color: '#333', boxShadow: '0 1px 2px rgba(0,0,0,0.02)'
-                }}>
+                <div 
+                  key={tag.id} 
+                  onClick={() => handleRemoveTag(tag.name)} // 点击触发删除
+                  style={{ 
+                    background: '#fff', border: '1px solid #eee', padding: '6px 12px', borderRadius: 20,
+                    fontSize: 13, color: '#333', boxShadow: '0 1px 2px rgba(0,0,0,0.02)',
+                    cursor: 'pointer', transition: 'all 0.2s', userSelect: 'none'
+                  }}
+                  onMouseDown={(e) => e.currentTarget.style.background = '#ffebeb'}
+                  onMouseUp={(e) => e.currentTarget.style.background = '#fff'}
+                  onTouchStart={(e) => e.currentTarget.style.background = '#ffebeb'}
+                  onTouchEnd={(e) => e.currentTarget.style.background = '#fff'}
+                >
                   {tag.name}
+                  {/* 可选：加个小叉号，这里为了保持胶囊风格简洁没加，点击即可 */}
                 </div>
               ))}
-              <div onClick={handleAddTag} style={{ 
-                background: '#f0f5ff', color: '#1677ff', borderRadius: 20, 
-                padding: '6px 16px', fontSize: 13, fontWeight: 500, cursor: 'pointer',
-                border: '1px dashed #adc6ff'
-              }}>
+              <div onClick={handleAddTag} style={{ background: '#f0f5ff', color: '#1677ff', borderRadius: 20, padding: '6px 16px', fontSize: 13, fontWeight: 500, cursor: 'pointer', border: '1px dashed #adc6ff' }}>
                 + 添加
               </div>
            </div>
         </div>
         
-        <div style={{ height: 40 }} /> {/* 底部占位 */}
+        <div style={{ height: 40 }} />
       </div>
     </div>
   );
 }
 
-// 辅助组件：技术参数小块
 function TechItem({ icon, label, value }: { icon: any, label: string, value: string }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 4 }}>

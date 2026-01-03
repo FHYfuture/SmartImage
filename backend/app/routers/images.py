@@ -236,3 +236,39 @@ async def update_image_info(
     await db.commit()
     await db.refresh(image)
     return image
+
+
+# 【新增】删除指定图片的指定标签
+@router.delete("/{image_id}/tags/{tag_name}")
+async def remove_tag_from_image(
+    image_id: int,
+    tag_name: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    # 1. 获取图片 (同时预加载 tags)
+    stmt = (
+        select(Image)
+        .where(Image.id == image_id, Image.user_id == current_user.id)
+        .options(selectinload(Image.tags))
+    )
+    result = await db.execute(stmt)
+    image = result.scalars().first()
+    
+    if not image:
+        raise HTTPException(status_code=404, detail="Image not found")
+
+    # 2. 在图片的标签列表中查找目标标签
+    tag_to_remove = None
+    for tag in image.tags:
+        if tag.name == tag_name:
+            tag_to_remove = tag
+            break
+            
+    # 3. 如果找到了，从列表中移除 (SQLAlchemy 会自动处理中间表删除)
+    if tag_to_remove:
+        image.tags.remove(tag_to_remove)
+        await db.commit()
+        return {"message": f"Tag '{tag_name}' removed"}
+    else:
+        raise HTTPException(status_code=404, detail="Tag not found on this image")
