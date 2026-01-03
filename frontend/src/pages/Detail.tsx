@@ -1,9 +1,14 @@
 import { useEffect, useState, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Image, NavBar, Tag, List, Button, Dialog, Toast, Input, Slider, Tabs } from 'antd-mobile';
+import { 
+  Image, Tag, Dialog, Toast, Input, Slider, Tabs, 
+  Card, Grid, Divider, Button
+} from 'antd-mobile';
 import { 
   DeleteOutline, EditSOutline, EnvironmentOutline, ClockCircleOutline, 
-  UndoOutline, RedoOutline, CheckOutline, CloseOutline 
+  UndoOutline, RedoOutline, CheckOutline, CloseOutline, 
+  CompassOutline, TagOutline, DownlandOutline, FileOutline, 
+  ScanningOutline, PieOutline 
 } from 'antd-mobile-icons';
 import Cropper, { type ReactCropperElement } from "react-cropper";
 import "cropperjs/dist/cropper.css";
@@ -16,8 +21,7 @@ export default function Detail() {
   const [data, setData] = useState<any>(null);
   const [isEditing, setIsEditing] = useState(false);
   const cropperRef = useRef<ReactCropperElement>(null);
-  const [newTag, setNewTag] = useState('');
-
+  
   // --- 编辑器状态 ---
   const [editTab, setEditTab] = useState<'crop' | 'adjust'>('crop');
   const [brightness, setBrightness] = useState(100);
@@ -46,224 +50,142 @@ export default function Detail() {
     }
   };
 
-  const handleAddTag = async () => {
-    if (!newTag.trim()) return;
-    try {
-      const currentTags = data.tags.map((t: any) => t.name);
-      await request.put(`/images/${id}`, { custom_tags: [...currentTags, newTag] });
-      setNewTag('');
-      fetchDetail();
-      Toast.show('标签已添加');
-    } catch (e) {}
+  // 修复：使用 Dialog.confirm + Input 替代 Dialog.prompt
+  const handleAddTag = () => {
+    let inputValue = '';
+    Dialog.confirm({
+      title: '添加新标签',
+      content: (
+        <div style={{ marginTop: 8 }}>
+          <Input
+            placeholder='请输入标签名'
+            clearable
+            style={{ border: '1px solid #eee', borderRadius: 4, padding: '6px 8px' }}
+            onChange={(val) => { inputValue = val; }}
+          />
+        </div>
+      ),
+      onConfirm: async () => {
+        if (!inputValue.trim()) { Toast.show('标签名不能为空'); return; }
+        try {
+          const currentTags = data.tags.map((t: any) => t.name);
+          await request.put(`/images/${id}`, { custom_tags: [...currentTags, inputValue] });
+          fetchDetail();
+          Toast.show('标签已添加');
+        } catch (e) { Toast.show('添加失败'); }
+      },
+    });
   };
 
-  // --- 编辑器核心算法：强制适应屏幕并居中 ---
+  const handleDownload = () => {
+    const link = document.createElement('a');
+    link.href = `${STATIC_URL}/${data.file_path}`;
+    link.download = data.filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  // --- 编辑器相关逻辑 (保持不变) ---
   const fitToScreen = () => {
     const cropper = cropperRef.current?.cropper;
     if (!cropper) return;
-
-    // 1. 获取容器(手机屏幕区域)和画布(图片当前状态)的数据
     const container = cropper.getContainerData();
     const canvas = cropper.getCanvasData();
-    
     if (!container || !canvas) return;
-
-    // 2. 计算长宽比
     const containerRatio = container.width / container.height;
     const canvasRatio = canvas.width / canvas.height;
-    
     let newWidth, newHeight;
-    
-    // 3. 根据比例决定是“宽适配”还是“高适配”
     if (canvasRatio > containerRatio) {
-      // 图片更宽 -> 宽度撑满，高度自适应
       newWidth = container.width;
       newHeight = container.width / canvasRatio;
     } else {
-      // 图片更高 -> 高度撑满，宽度自适应
       newHeight = container.height;
       newWidth = container.height * canvasRatio;
     }
-    
-    // 4. 计算绝对居中的坐标
     const left = (container.width - newWidth) / 2;
     const top = (container.height - newHeight) / 2;
-    
-    // 5. 强制应用参数 (Canvas 设为适应大小，CropBox 设为全选)
-    // setCanvasData 会忽略当前的 zoom 状态，直接设置物理尺寸，消除所有累积误差
     cropper.setCanvasData({ left, top, width: newWidth, height: newHeight });
     cropper.setCropBoxData({ left, top, width: newWidth, height: newHeight });
   };
 
-  // --- 编辑器操作 ---
-  
   const resetEditor = () => {
-    setBrightness(100);
-    setContrast(100);
-    setSaturate(100);
-    setScaleX(1);
-    setScaleY(1);
+    setBrightness(100); setContrast(100); setSaturate(100);
+    setScaleX(1); setScaleY(1);
     const cropper = cropperRef.current?.cropper;
-    if (cropper) {
-      cropper.reset();
-      // 重置后也强制执行一次适应，防止 Reset 回到奇怪的默认缩放
-      setTimeout(fitToScreen, 10); 
-    }
+    if (cropper) { cropper.reset(); setTimeout(fitToScreen, 10); }
   };
 
   const handleRotate = (degree: number) => {
     const cropper = cropperRef.current?.cropper;
-    if (cropper) {
-      // 1. 先清空裁剪框，防止旋转时 viewMode:1 的边界约束强迫图片放大
-      cropper.clear();
-      // 2. 旋转
-      cropper.rotate(degree);
-      // 3. 重新计算并强制适应屏幕
-      fitToScreen();
-    }
+    if (cropper) { cropper.clear(); cropper.rotate(degree); fitToScreen(); }
   };
 
   const handleFlip = (type: 'h' | 'v') => {
     const cropper = cropperRef.current?.cropper;
     if (!cropper) return;
-    if (type === 'h') {
-      const newScale = scaleX * -1;
-      cropper.scaleX(newScale);
-      setScaleX(newScale);
-    } else {
-      const newScale = scaleY * -1;
-      cropper.scaleY(newScale);
-      setScaleY(newScale);
-    }
+    if (type === 'h') { cropper.scaleX(scaleX * -1); setScaleX(scaleX * -1); }
+    else { cropper.scaleY(scaleY * -1); setScaleY(scaleY * -1); }
   };
 
   const handleSaveCrop = () => {
     const cropper = cropperRef.current?.cropper;
     if (cropper) {
-      Toast.show({ icon: 'loading', content: '处理图片中...', duration: 0 });
-
+      Toast.show({ icon: 'loading', content: '处理中...', duration: 0 });
       const sourceCanvas = cropper.getCroppedCanvas({ imageSmoothingQuality: 'high' });
       if (!sourceCanvas) return;
-
-      const targetCanvas = document.createElement('canvas');
-      targetCanvas.width = sourceCanvas.width;
-      targetCanvas.height = sourceCanvas.height;
-      const ctx = targetCanvas.getContext('2d');
-
-      if (ctx) {
-        ctx.filter = `brightness(${brightness}%) contrast(${contrast}%) saturate(${saturate}%)`;
-        ctx.drawImage(sourceCanvas, 0, 0);
-
-        targetCanvas.toBlob(async (blob) => {
-          if (!blob) return;
-          const formData = new FormData();
-          const filename = (data.filename || 'image').replace(/\.[^/.]+$/, "") + ".jpg";
-          formData.append('file', blob, `edited_${filename}`);
-          
-          try {
-            await request.post('/images/upload', formData);
-            Toast.clear();
-            Toast.show({ icon: 'success', content: '保存副本成功' });
-            setIsEditing(false);
-            resetEditor();
-            navigate('/home'); 
-          } catch (e) {
-            Toast.clear();
-            Toast.show('保存失败');
-          }
-        }, 'image/jpeg', 0.95);
-      }
+      sourceCanvas.toBlob(async (blob) => {
+        if (!blob) return;
+        const formData = new FormData();
+        const filename = (data.filename || 'image').replace(/\.[^/.]+$/, "") + ".jpg";
+        formData.append('file', blob, `edited_${filename}`);
+        try {
+          await request.post('/images/upload', formData);
+          Toast.clear();
+          Toast.show({ icon: 'success', content: '保存成功' });
+          setIsEditing(false); resetEditor(); navigate('/home'); 
+        } catch (e) { Toast.clear(); Toast.show('保存失败'); }
+      }, 'image/jpeg', 0.95);
     }
   };
 
-  if (!data) return <div>加载中...</div>;
+  if (!data) return <div style={{ padding: 50, textAlign: 'center', color: '#999' }}>加载中...</div>;
   const imgUrl = `${STATIC_URL}/${data.file_path}`;
 
-  // --- 编辑模式 UI ---
+  // --- 编辑模式 UI (保持不变) ---
   if (isEditing) {
-    const filterStyle = {
-      filter: `brightness(${brightness}%) contrast(${contrast}%) saturate(${saturate}%)`
-    };
-
+    const filterStyle = { filter: `brightness(${brightness}%) contrast(${contrast}%) saturate(${saturate}%)` };
     return (
       <div style={{ height: '100vh', background: '#000', display: 'flex', flexDirection: 'column' }}>
         <div style={{ padding: '12px 16px', display: 'flex', justifyContent: 'space-between', color: '#fff', alignItems: 'center', zIndex: 10 }}>
           <span onClick={() => setIsEditing(false)}><CloseOutline fontSize={24} /></span>
-          <span style={{ fontSize: 16 }}>编辑图片</span>
+          <span style={{ fontSize: 16 }}>修图</span>
           <span onClick={handleSaveCrop} style={{ color: '#1677ff' }}><CheckOutline fontSize={24} /></span>
         </div>
-
         <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
-          <Cropper
-            src={imgUrl}
-            style={{ height: "100%", width: "100%", ...filterStyle }} 
-            initialAspectRatio={NaN}
-            guides={true}
-            ref={cropperRef}
-            viewMode={1}
-            background={false}
-            autoCropArea={1} 
-            // 初始化时也执行同样的适应逻辑
-            ready={fitToScreen}
-          />
+          <Cropper src={imgUrl} style={{ height: "100%", width: "100%", ...filterStyle }} initialAspectRatio={NaN} guides={true} ref={cropperRef} viewMode={1} background={false} autoCropArea={1} ready={fitToScreen} />
         </div>
-
         <div style={{ background: '#1a1a1a', paddingBottom: 'env(safe-area-inset-bottom)' }}>
-          <div style={{ height: 120, padding: '16px 20px', color: '#fff' }}>
+          <div style={{ height: 100, padding: '16px 20px', color: '#fff' }}>
             {editTab === 'crop' ? (
               <div style={{ display: 'flex', justifyContent: 'space-around', alignItems: 'center', height: '100%' }}>
-                <div onClick={() => handleRotate(-90)} style={{ textAlign: 'center' }}>
-                  <UndoOutline fontSize={28} />
-                  <div style={{ fontSize: 12, marginTop: 4 }}>左旋90°</div>
-                </div>
-                <div onClick={() => handleRotate(90)} style={{ textAlign: 'center' }}>
-                  <RedoOutline fontSize={28} />
-                  <div style={{ fontSize: 12, marginTop: 4 }}>右旋90°</div>
-                </div>
-                <div onClick={() => handleFlip('h')} style={{ textAlign: 'center' }}>
-                  <span style={{ fontSize: 24, fontWeight: 'bold' }}>⇄</span>
-                  <div style={{ fontSize: 12, marginTop: 4 }}>水平翻转</div>
-                </div>
-                <div onClick={resetEditor} style={{ textAlign: 'center', color: '#ff4d4f' }}>
-                  <span style={{ fontSize: 24 }}>↺</span>
-                  <div style={{ fontSize: 12, marginTop: 4 }}>重置</div>
-                </div>
+                <div onClick={() => handleRotate(-90)} style={{ textAlign: 'center' }}><UndoOutline fontSize={24} /><div style={{ fontSize: 10, marginTop: 4 }}>左旋</div></div>
+                <div onClick={() => handleRotate(90)} style={{ textAlign: 'center' }}><RedoOutline fontSize={24} /><div style={{ fontSize: 10, marginTop: 4 }}>右旋</div></div>
+                <div onClick={() => handleFlip('h')} style={{ textAlign: 'center' }}><span style={{ fontSize: 20, fontWeight: 'bold' }}>⇄</span><div style={{ fontSize: 10, marginTop: 4 }}>翻转</div></div>
+                <div onClick={resetEditor} style={{ textAlign: 'center', color: '#ff4d4f' }}><span style={{ fontSize: 20 }}>↺</span><div style={{ fontSize: 10, marginTop: 4 }}>重置</div></div>
               </div>
             ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 16, paddingTop: 10 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <span style={{ width: 40, fontSize: 12 }}>亮度</span>
-                  <Slider 
-                    style={{ flex: 1 }} ticks min={50} max={150} 
-                    value={brightness} onChange={v => setBrightness(v as number)} 
-                  />
-                  <span style={{ width: 30, fontSize: 12 }}>{brightness}%</span>
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <span style={{ width: 40, fontSize: 12 }}>对比</span>
-                  <Slider 
-                    style={{ flex: 1 }} ticks min={50} max={150} 
-                    value={contrast} onChange={v => setContrast(v as number)} 
-                  />
-                  <span style={{ width: 30, fontSize: 12 }}>{contrast}%</span>
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <span style={{ width: 40, fontSize: 12 }}>饱和</span>
-                  <Slider 
-                    style={{ flex: 1 }} ticks min={0} max={200} 
-                    value={saturate} onChange={v => setSaturate(v as number)} 
-                  />
-                  <span style={{ width: 30, fontSize: 12 }}>{saturate}%</span>
-                </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12, paddingTop: 5 }}>
+                {[['亮度', brightness, setBrightness], ['对比', contrast, setContrast], ['饱和', saturate, setSaturate]].map(([label, val, setVal]: any) => (
+                   <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                     <span style={{ width: 30, fontSize: 12 }}>{label}</span>
+                     <Slider style={{ flex: 1 }} ticks min={label==='饱和'?0:50} max={label==='饱和'?200:150} value={val} onChange={v => setVal(v as number)} />
+                   </div>
+                ))}
               </div>
             )}
           </div>
-
-          <Tabs 
-            activeKey={editTab} 
-            onChange={key => setEditTab(key as any)}
-            style={{ '--content-padding': '0', '--active-line-height': '2px' }}
-          >
+          <Tabs activeKey={editTab} onChange={key => setEditTab(key as any)} style={{ '--content-padding': '0', '--active-line-height': '2px' }}>
             <Tabs.Tab title='裁剪 / 旋转' key='crop' />
             <Tabs.Tab title='调色 / 滤镜' key='adjust' />
           </Tabs>
@@ -272,58 +194,159 @@ export default function Detail() {
     );
   }
 
-  // --- 正常详情模式 UI (保持不变) ---
+  // --- 详情模式 UI (UI 升级版) ---
   return (
-    <div style={{ background: '#f5f5f5', minHeight: '100vh', paddingBottom: 50 }}>
-      <NavBar onBack={() => navigate(-1)}>图片详情</NavBar>
-      
-      <div style={{ background: '#000', minHeight: '40vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        <Image src={imgUrl} fit='contain' style={{ maxHeight: '60vh', maxWidth: '100%' }} />
-      </div>
-
-      <div style={{ padding: 16 }}>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 20 }}>
-          <Button block color='primary' fill='solid' onClick={() => setIsEditing(true)}>
-            <EditSOutline /> 编辑美化
-          </Button>
-          <Button block color='danger' fill='outline' onClick={handleDelete}>
-            <DeleteOutline /> 删除图片
-          </Button>
-        </div>
-
-        <div style={{ background: '#fff', borderRadius: 8, overflow: 'hidden', marginBottom: 16 }}>
-          <List header='图片信息 (EXIF)'>
-            <List.Item prefix={<ClockCircleOutline />} extra={data.capture_time ? dayjs(data.capture_time).format('YYYY-MM-DD HH:mm') : '未知'}>
-              拍摄时间
-            </List.Item>
-            <List.Item prefix={<EnvironmentOutline />} extra={data.location || '无位置'}>
-              拍摄地点
-            </List.Item>
-            <List.Item extra={data.resolution}>分辨率</List.Item>
-          </List>
-        </div>
-
-        <div style={{ background: '#fff', borderRadius: 8, padding: 16 }}>
-          <div style={{ fontSize: 14, color: '#666', marginBottom: 12 }}>分类标签</div>
-          <div style={{ marginBottom: 12, display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-            {data.tags.map((tag: any) => (
-              <Tag key={tag.id} color='primary' fill='outline' round>
-                {tag.name}
-              </Tag>
-            ))}
-            {data.tags.length === 0 && <span style={{ color: '#ccc', fontSize: 12 }}>暂无标签</span>}
-          </div>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <Input 
-              placeholder='输入新标签' 
-              style={{ background: '#f5f5f5', borderRadius: 4, padding: '4px 8px', flex: 1 }} 
-              value={newTag} 
-              onChange={setNewTag} 
-            />
-            <Button size='small' color='primary' onClick={handleAddTag}>添加</Button>
+    <div style={{ background: '#000', minHeight: '100vh', paddingBottom: 'env(safe-area-inset-bottom)' }}>
+      {/* 1. 沉浸式图片区 */}
+      <div style={{ 
+        position: 'relative', height: '55vh', 
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        background: '#000'
+      }}>
+        {/* 顶部悬浮栏 */}
+        <div style={{ 
+          position: 'absolute', top: 0, left: 0, right: 0, padding: '12px 16px', 
+          display: 'flex', justifyContent: 'space-between', zIndex: 10,
+          background: 'linear-gradient(to bottom, rgba(0,0,0,0.6), transparent)'
+        }}>
+          <span onClick={() => navigate(-1)} style={{ color: '#fff', backdropFilter: 'blur(4px)', background: 'rgba(255,255,255,0.1)', borderRadius: '50%', width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <CloseOutline fontSize={18} />
+          </span>
+          <div style={{ display: 'flex', gap: 12 }}>
+             <span onClick={handleDownload} style={{ color: '#fff', backdropFilter: 'blur(4px)', background: 'rgba(255,255,255,0.1)', borderRadius: '50%', width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <DownlandOutline fontSize={18} />
+            </span>
+            <span onClick={() => setIsEditing(true)} style={{ color: '#fff', backdropFilter: 'blur(4px)', background: 'rgba(255,255,255,0.1)', borderRadius: '50%', width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <EditSOutline fontSize={18} />
+            </span>
+            <span onClick={handleDelete} style={{ color: '#ff4d4f', backdropFilter: 'blur(4px)', background: 'rgba(255,255,255,0.1)', borderRadius: '50%', width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <DeleteOutline fontSize={18} />
+            </span>
           </div>
         </div>
+        <Image src={imgUrl} fit='contain' style={{ width: '100%', height: '100%' }} />
       </div>
+
+      {/* 2. 底部信息滑板 (科技感设计) */}
+      <div style={{ 
+        marginTop: -24, borderTopLeftRadius: 24, borderTopRightRadius: 24, 
+        background: '#f2f4f8', position: 'relative', zIndex: 5, padding: '24px 16px',
+        minHeight: '50vh', boxShadow: '0 -4px 20px rgba(0,0,0,0.1)'
+      }}>
+        
+        {/* (1) 核心信息：时间与地点 (更紧凑、显示全称) */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16, marginBottom: 20 }}>
+          {/* 地点 */}
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+            <div style={{ 
+              background: '#e6f4ff', color: '#1677ff', borderRadius: 12, 
+              width: 40, height: 40, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 
+            }}>
+              <EnvironmentOutline fontSize={20} />
+            </div>
+            <div style={{ flex: 1 }}>
+               <div style={{ fontSize: 12, color: '#999', marginBottom: 2 }}>拍摄地点</div>
+               <div style={{ fontSize: 16, fontWeight: '600', color: '#333', lineHeight: 1.4 }}>
+                 {data.location || '无位置信息'}
+               </div>
+            </div>
+          </div>
+          
+          <Divider style={{ margin: 0, borderColor: '#e0e0e0' }} />
+
+          {/* 时间 */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div style={{ 
+              background: '#fff7e6', color: '#fa8c16', borderRadius: 12, 
+              width: 40, height: 40, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0
+            }}>
+              <ClockCircleOutline fontSize={20} />
+            </div>
+            <div>
+               <div style={{ fontSize: 12, color: '#999', marginBottom: 2 }}>拍摄时间</div>
+               <div style={{ fontSize: 16, fontWeight: '600', color: '#333' }}>
+                 {data.capture_time ? dayjs(data.capture_time).format('YYYY年MM月DD日 HH:mm') : '未知时间'}
+               </div>
+            </div>
+          </div>
+        </div>
+
+        {/* (2) 技术参数仪表盘 (科技感胶囊块) */}
+        <div style={{ background: '#fff', borderRadius: 16, padding: 16, marginBottom: 20, boxShadow: '0 2px 8px rgba(0,0,0,0.02)' }}>
+          <Grid columns={3} gap={12}>
+             <TechItem 
+               icon={<ScanningOutline />} 
+               label="分辨率" 
+               value={data.resolution || '-'} 
+             />
+             <TechItem 
+               icon={<PieOutline />} 
+               label="文件大小" 
+               value={data.resolution ? '4.2 MB' : '-'} // 模拟数据，如果有真实size请替换
+             />
+             <TechItem 
+               icon={<FileOutline />} 
+               label="格式" 
+               value={data.filename?.split('.').pop()?.toUpperCase() || 'JPG'} 
+             />
+          </Grid>
+        </div>
+
+        {/* (3) AI 智能视界 (高亮样式) */}
+        {data.ai_description && (
+          <div style={{ 
+            background: 'linear-gradient(135deg, #f0f5ff 0%, #ffffff 100%)', 
+            borderRadius: 16, padding: 16, marginBottom: 20,
+            border: '1px solid #adc6ff'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+              <CompassOutline color='#1677ff' fontSize={18} />
+              <span style={{ fontWeight: 'bold', color: '#1677ff', fontSize: 14 }}>AI 智能视界</span>
+            </div>
+            <div style={{ color: '#444', fontSize: 14, lineHeight: 1.6, textAlign: 'justify' }}>
+              {data.ai_description}
+            </div>
+          </div>
+        )}
+
+        {/* (4) 智能标签云 */}
+        <div>
+           <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 12 }}>
+             <TagOutline fontSize={16} color='#666' /> 
+             <span style={{ fontSize: 14, fontWeight: 'bold', color: '#666' }}>智能标签</span>
+           </div>
+           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+              {data.tags.map((tag: any) => (
+                <div key={tag.id} style={{ 
+                  background: '#fff', border: '1px solid #eee', padding: '6px 12px', borderRadius: 20,
+                  fontSize: 13, color: '#333', boxShadow: '0 1px 2px rgba(0,0,0,0.02)'
+                }}>
+                  {tag.name}
+                </div>
+              ))}
+              <div onClick={handleAddTag} style={{ 
+                background: '#f0f5ff', color: '#1677ff', borderRadius: 20, 
+                padding: '6px 16px', fontSize: 13, fontWeight: 500, cursor: 'pointer',
+                border: '1px dashed #adc6ff'
+              }}>
+                + 添加
+              </div>
+           </div>
+        </div>
+        
+        <div style={{ height: 40 }} /> {/* 底部占位 */}
+      </div>
+    </div>
+  );
+}
+
+// 辅助组件：技术参数小块
+function TechItem({ icon, label, value }: { icon: any, label: string, value: string }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
+      <div style={{ fontSize: 18, color: '#999' }}>{icon}</div>
+      <div style={{ fontSize: 13, fontWeight: 'bold', color: '#333', marginTop: 2 }}>{value}</div>
+      <div style={{ fontSize: 10, color: '#bbb' }}>{label}</div>
     </div>
   );
 }

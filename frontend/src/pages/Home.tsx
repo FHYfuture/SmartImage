@@ -1,9 +1,13 @@
-import React, { useState, useRef } from 'react';
-import { SearchBar, FloatingBubble, InfiniteScroll, Toast, PullToRefresh, ImageViewer, ActionSheet, Button, Dialog } from 'antd-mobile';
-import { AddOutline, MoreOutline, SearchOutline, CheckCircleFill, CheckCircleOutline, DeleteOutline } from 'antd-mobile-icons';
+import React, { useState, useRef, useEffect } from 'react';
+import { SearchBar, FloatingBubble, InfiniteScroll, Toast, PullToRefresh, ImageViewer, Button, Dialog, Modal } from 'antd-mobile';
+import { 
+  AddOutline, MoreOutline, SearchOutline, CheckCircleFill, CheckCircleOutline, 
+  DeleteOutline, DownOutline, EnvironmentOutline, ClockCircleOutline, 
+  PictureOutline, EyeOutline, EditSOutline, DownlandOutline 
+} from 'antd-mobile-icons';
 import { useNavigate } from 'react-router-dom';
-import request, { STATIC_URL } from '../utils/request';
-import type { Action } from 'antd-mobile/es/components/action-sheet';
+import request, { STATIC_URL, baseURL } from '../utils/request';
+import dayjs from 'dayjs';
 
 export default function Home() {
   const navigate = useNavigate();
@@ -16,7 +20,7 @@ export default function Home() {
   const [isSelectionMode, setIsSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
 
-  // --- 轮播图状态 ---
+  // --- 增强版轮播图状态 ---
   const [viewerVisible, setViewerVisible] = useState(false);
   const [viewerIndex, setViewerIndex] = useState(0);
 
@@ -42,7 +46,7 @@ export default function Home() {
     }
   }
 
-  // --- 上传逻辑 (支持多选) ---
+  // --- 上传逻辑 ---
   const triggerUpload = () => { fileRef.current?.click(); };
 
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -74,36 +78,22 @@ export default function Home() {
     loadMore(true); 
   };
 
-  // --- 交互逻辑 ---
+  // --- 点击交互 ---
   const handleItemClick = (index: number, id: number) => {
     if (isSelectionMode) {
       toggleSelection(id);
-      return;
+    } else {
+      // 直接打开增强版大图
+      setViewerIndex(index); 
+      setViewerVisible(true); 
     }
-
-    ActionSheet.show({
-      actions: [{ key: 'view', text: '大图轮播' }, { key: 'detail', text: '查看详情与编辑' }],
-      closeOnAction: true,
-      onAction: (action: Action) => {
-        if (action.key === 'view') { 
-          setViewerIndex(index); 
-          setViewerVisible(true); 
-        }
-        else if (action.key === 'detail') { 
-          navigate(`/detail/${id}`); 
-        }
-      },
-    });
   };
 
-  // --- 批量操作逻辑 ---
+  // --- 批量选择逻辑 ---
   const toggleSelection = (id: number) => {
     const newSet = new Set(selectedIds);
-    if (newSet.has(id)) {
-      newSet.delete(id);
-    } else {
-      newSet.add(id);
-    }
+    if (newSet.has(id)) newSet.delete(id);
+    else newSet.add(id);
     setSelectedIds(newSet);
   };
 
@@ -118,11 +108,7 @@ export default function Home() {
 
   const handleBatchDelete = async () => {
     if (selectedIds.size === 0) return;
-    
-    const result = await Dialog.confirm({
-      content: `确定要删除选中的 ${selectedIds.size} 张图片吗？此操作不可恢复。`,
-    });
-
+    const result = await Dialog.confirm({ content: `确定删除 ${selectedIds.size} 张图片吗？` });
     if (result) {
       Toast.show({ icon: 'loading', content: '删除中...', duration: 0 });
       try {
@@ -132,100 +118,146 @@ export default function Home() {
         setIsSelectionMode(false);
         setSelectedIds(new Set());
         loadMore(true);
-      } catch (e) {
-        Toast.clear();
-        Toast.show('删除失败');
-      }
+      } catch (e) { Toast.show('删除失败'); }
     }
   };
 
-  // 判断是否全选
+  // --- 单图操作逻辑 (在大图模式下使用) ---
+  const handleSingleDelete = async (id: number) => {
+    const result = await Dialog.confirm({ content: '确定删除这张图片吗？' });
+    if (result) {
+      await request.delete(`/images/${id}`);
+      Toast.show('已删除');
+      setViewerVisible(false);
+      loadMore(true);
+    }
+  };
+
+  const handleDownload = (filePath: string) => {
+    const link = document.createElement('a');
+    // 注意：这里需要完整的 URL，且如果跨域可能需要后端配置 CORS
+    link.href = `${STATIC_URL}/${filePath}`;
+    link.download = filePath.split('/').pop() || 'image.jpg';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  // --- 渲染大图覆盖层 (Immersive Overlay) ---
+  // 这是本次修改的核心：自定义一个悬浮在 ImageViewer 之上的 UI 层
+  const renderViewerOverlay = () => {
+    if (!viewerVisible || !data[viewerIndex]) return null;
+    
+    const currentImg = data[viewerIndex];
+    const dateStr = currentImg.capture_time 
+      ? dayjs(currentImg.capture_time).format('YYYY年MM月DD日 HH:mm') 
+      : dayjs(currentImg.upload_time).format('YYYY-MM-DD (上传)');
+
+    return (
+      <div 
+        className="viewer-overlay" 
+        style={{ 
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, 
+          zIndex: 1001, pointerEvents: 'none', // 让点击事件穿透到底下的图片
+          display: 'flex', flexDirection: 'column', justifyContent: 'space-between'
+        }}
+      >
+        {/* 顶部栏 */}
+        <div style={{ 
+          padding: '12px 16px', background: 'linear-gradient(to bottom, rgba(0,0,0,0.6), transparent)', 
+          color: '#fff', display: 'flex', justifyContent: 'space-between', alignItems: 'center', pointerEvents: 'auto'
+        }}>
+          <div style={{ fontSize: 14 }}>
+            {viewerIndex + 1} / {data.length}
+          </div>
+          <span onClick={() => setViewerVisible(false)} style={{ fontSize: 24, cursor: 'pointer' }}>×</span>
+        </div>
+
+        {/* 底部详细信息栏 */}
+        <div style={{ 
+          background: 'linear-gradient(to top, rgba(0,0,0,0.8), transparent)', 
+          padding: '20px 16px 30px', color: '#fff', pointerEvents: 'auto'
+        }}>
+          {/* 信息区 */}
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ fontSize: 16, fontWeight: 'bold', marginBottom: 4, display: 'flex', alignItems: 'center', gap: 6 }}>
+              <ClockCircleOutline /> {dateStr}
+            </div>
+            {currentImg.location && (
+              <div style={{ fontSize: 13, opacity: 0.9, display: 'flex', alignItems: 'center', gap: 6 }}>
+                <EnvironmentOutline /> {currentImg.location}
+              </div>
+            )}
+            <div style={{ fontSize: 12, opacity: 0.7, marginTop: 4, marginLeft: 22 }}>
+              {currentImg.resolution || '未知分辨率'} · {currentImg.filename}
+            </div>
+          </div>
+
+          {/* 按钮操作区 */}
+          <div style={{ display: 'flex', justifyContent: 'space-around', alignItems: 'center', paddingTop: 12, borderTop: '1px solid rgba(255,255,255,0.2)' }}>
+            <div onClick={() => navigate(`/detail/${currentImg.id}`)} style={{ textAlign: 'center', opacity: 0.9 }}>
+              <EditSOutline fontSize={24} />
+              <div style={{ fontSize: 10, marginTop: 2 }}>编辑/详情</div>
+            </div>
+            <div onClick={() => handleDownload(currentImg.file_path)} style={{ textAlign: 'center', opacity: 0.9 }}>
+              <DownlandOutline fontSize={24} />
+              <div style={{ fontSize: 10, marginTop: 2 }}>原图下载</div>
+            </div>
+            <div onClick={() => handleSingleDelete(currentImg.id)} style={{ textAlign: 'center', color: '#ff4d4f' }}>
+              <DeleteOutline fontSize={24} />
+              <div style={{ fontSize: 10, marginTop: 2 }}>删除</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   const isAllSelected = data.length > 0 && selectedIds.size === data.length;
 
   return (
-    // 修改 1: 底部 padding 减小，因为没有底部栏了
-    <div style={{ paddingBottom: 80 }}>
+    <div style={{ paddingBottom: 80, background: '#f9f9f9', minHeight: '100vh' }}>
       {/* 顶部导航栏 */}
       <div className="glass-nav" style={{ 
-        position: 'sticky', top: 0, zIndex: 99, background: '#fff',
-        boxShadow: '0 2px 8px rgba(0,0,0,0.02)'
+        position: 'sticky', top: 0, zIndex: 99, background: 'rgba(255,255,255,0.95)',
+        backdropFilter: 'blur(10px)', borderBottom: '1px solid rgba(0,0,0,0.05)'
       }}>
-        {/* 顶部第一行：标题与操作区 */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 16px', height: 44 }}>
-          {/* 左侧：标题 */}
-          <div style={{ fontSize: 18, fontWeight: 'bold' }}>
-            {isSelectionMode ? `已选 ${selectedIds.size}` : '我的相册'}
+          <div style={{ fontSize: 20, fontWeight: '800', color: '#333' }}>
+            {isSelectionMode ? `已选 ${selectedIds.size}` : 'Photos'}
           </div>
-
-          {/* 右侧：按钮组 */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             {isSelectionMode ? (
               <>
-                {/* 按钮 1: 全选 */}
-                <Button 
-                  size='mini' 
-                  fill='none'
-                  onClick={toggleSelectAll}
-                  style={{ fontSize: 14, padding: '0 8px' }}
-                >
-                  {isAllSelected ? '取消全选' : '全选'}
+                <Button size='mini' fill='none' onClick={toggleSelectAll}>
+                  {isAllSelected ? '取消' : '全选'}
                 </Button>
-
-                {/* 按钮 2: 删除 (图标形式，节省空间) */}
-                <Button 
-                  size='mini' 
-                  color='danger'
-                  fill='none'
-                  disabled={selectedIds.size === 0}
-                  onClick={handleBatchDelete}
-                  style={{ padding: '0 4px', border: 'none' }}
-                >
-                  <DeleteOutline fontSize={20} />
+                <Button size='mini' color='danger' fill='none' disabled={selectedIds.size === 0} onClick={handleBatchDelete} style={{ border: 'none' }}>
+                  <DeleteOutline fontSize={22} />
                 </Button>
-
-                {/* 按钮 3: 完成 */}
-                <Button 
-                  size='mini' 
-                  color='primary' 
-                  onClick={() => {
-                    setIsSelectionMode(false);
-                    setSelectedIds(new Set());
-                  }}
-                >
+                <Button size='mini' color='primary' shape='rounded' onClick={() => { setIsSelectionMode(false); setSelectedIds(new Set()); }}>
                   完成
                 </Button>
               </>
             ) : (
-              /* 非选择模式：仅显示管理按钮 */
-              <Button 
-                size='mini' 
-                fill='outline'
-                onClick={() => setIsSelectionMode(true)}
-              >
-                批量管理
+              <Button size='mini' fill='none' onClick={() => setIsSelectionMode(true)} style={{ fontWeight: 'bold' }}>
+                选择
               </Button>
             )}
           </div>
         </div>
 
-        {/* 顶部第二行：搜索栏 (仅在非选择模式下显示) */}
         {!isSelectionMode && (
           <div style={{ padding: '0 16px 12px' }}>
-            <div style={{ background: '#f5f5f5', borderRadius: 20, padding: '0 4px' }}>
-              <SearchBar 
-                placeholder='搜索图片标签...' 
-                onSearch={val => { setSearch(val); loadMore(true, val); }} 
-                onClear={() => { setSearch(''); loadMore(true, ''); }}
-                style={{ '--background': 'transparent' }}
-              />
+            <div style={{ background: '#f0f2f5', borderRadius: 12, padding: '2px 4px' }}>
+              <SearchBar placeholder='搜索地点、时间或标签...' onSearch={val => { setSearch(val); loadMore(true, val); }} onClear={() => { setSearch(''); loadMore(true, ''); }} style={{ '--background': 'transparent' }} />
             </div>
           </div>
         )}
       </div>
 
       <PullToRefresh onRefresh={() => loadMore(true)}>
-        {/* 瀑布流布局 */}
-        <div className="masonry-grid" style={{ marginTop: 12 }}>
+        <div className="masonry-grid" style={{ padding: '8px', gap: '8px' }}>
           {data.map((item, index) => {
             const isSelected = selectedIds.has(item.id);
             return (
@@ -234,37 +266,32 @@ export default function Home() {
                 className="image-card" 
                 onClick={() => handleItemClick(index, item.id)}
                 style={{ 
-                  position: 'relative',
-                  border: isSelectionMode && isSelected ? '2px solid #1677ff' : '2px solid transparent',
+                  position: 'relative', borderRadius: 8, overflow: 'hidden',
+                  boxShadow: '0 2px 8px rgba(0,0,0,0.08)', background: '#fff',
                   transform: isSelectionMode && isSelected ? 'scale(0.95)' : 'scale(1)',
-                  transition: 'all 0.2s'
+                  transition: 'all 0.2s',
+                  border: isSelectionMode && isSelected ? '2px solid #1677ff' : 'none'
                 }}
               >
-                <img 
-                  src={`${STATIC_URL}/${item.thumbnail_path}`} 
-                  loading="lazy" 
-                  alt="img"
-                />
+                <img src={`${STATIC_URL}/${item.thumbnail_path}`} loading="lazy" alt="img" style={{ display: 'block', width: '100%' }} />
                 
-                {/* 选择模式下的勾选图标 */}
-                {isSelectionMode && (
-                  <div style={{ position: 'absolute', top: 8, right: 8, zIndex: 10 }}>
-                    {isSelected ? (
-                      <CheckCircleFill fontSize={24} color='#1677ff' />
-                    ) : (
-                      <CheckCircleOutline fontSize={24} color='#fff' style={{ filter: 'drop-shadow(0 0 2px rgba(0,0,0,0.5))' }} />
-                    )}
-                  </div>
-                )}
-                
+                {/* 遮罩层：增强文字可读性 */}
                 {!isSelectionMode && (
-                  <div style={{ padding: '8px 12px' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <span style={{ fontSize: 12, color: '#666', background: '#f0f0f0', padding: '2px 6px', borderRadius: 4 }}>
-                        {item.resolution || 'UNK'}
-                      </span>
-                      <MoreOutline color='#999' />
-                    </div>
+                   <div style={{ 
+                     position: 'absolute', bottom: 0, left: 0, right: 0, 
+                     background: 'linear-gradient(to top, rgba(0,0,0,0.6), transparent)',
+                     padding: '20px 8px 6px', pointerEvents: 'none'
+                   }}>
+                     <div style={{ color: '#fff', fontSize: 10, fontWeight: 'bold', display: 'flex', justifyContent: 'space-between' }}>
+                        <span>{item.capture_time ? dayjs(item.capture_time).format('MM-DD') : ''}</span>
+                        {item.location && <span>{item.location.split(' ').pop()}</span>}
+                     </div>
+                   </div>
+                )}
+
+                {isSelectionMode && (
+                  <div style={{ position: 'absolute', top: 6, right: 6, zIndex: 10 }}>
+                    {isSelected ? <CheckCircleFill fontSize={22} color='#1677ff' /> : <CheckCircleOutline fontSize={22} color='#fff' style={{ filter: 'drop-shadow(0 0 2px rgba(0,0,0,0.5))' }} />}
                   </div>
                 )}
               </div>
@@ -273,41 +300,33 @@ export default function Home() {
         </div>
         
         {data.length === 0 && (
-          <div style={{ textAlign: 'center', padding: 60, color: '#ccc' }}>
-            <SearchOutline fontSize={48} />
-            <p>暂无图片</p>
+          <div style={{ textAlign: 'center', padding: 80, color: '#ccc' }}>
+            <PictureOutline fontSize={64} style={{ opacity: 0.5 }} />
+            <p style={{ marginTop: 16 }}>暂无照片，快去上传吧</p>
           </div>
         )}
-        
         <InfiniteScroll loadMore={() => loadMore(false)} hasMore={hasMore} />
       </PullToRefresh>
 
-      {/* 修改 2: 删除了底部的操作栏代码 */}
+      {/* 增强版图片查看器 */}
+      {viewerVisible && (
+        <>
+          {renderViewerOverlay()}
+          <ImageViewer.Multi
+            images={data.map(item => `${STATIC_URL}/${item.file_path}`)}
+            visible={viewerVisible}
+            defaultIndex={viewerIndex}
+            onClose={() => setViewerVisible(false)}
+            onIndexChange={(index) => setViewerIndex(index)}
+          />
+        </>
+      )}
 
-      <ImageViewer.Multi
-        images={data.map(item => `${STATIC_URL}/${item.file_path}`)}
-        visible={viewerVisible}
-        defaultIndex={viewerIndex}
-        onClose={() => setViewerVisible(false)}
-      />
-
-      <input 
-        type="file" 
-        multiple 
-        ref={fileRef} 
-        style={{ display: 'none' }} 
-        accept="image/*" 
-        onChange={handleUpload} 
-      />
+      <input type="file" multiple ref={fileRef} style={{ display: 'none' }} accept="image/*" onChange={handleUpload} />
       
       {!isSelectionMode && (
         <FloatingBubble 
-          style={{ 
-            '--initial-position-bottom': '90px', 
-            '--initial-position-right': '24px', 
-            '--z-index': '100', 
-            '--background': '#1677ff' 
-          }}
+          style={{ '--initial-position-bottom': '40px', '--initial-position-right': '20px', '--z-index': '90', '--background': '#000' }}
           onClick={triggerUpload}
         >
           <AddOutline fontSize={32} color='#fff' />
