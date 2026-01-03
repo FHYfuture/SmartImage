@@ -34,22 +34,27 @@ async def upload_image(
     metadata = await process_upload(file, current_user.id)
     
     # 2. 存入数据库
+    # 路径处理：存储相对于项目根目录的相对路径，方便前端静态资源访问
+    # 如果 settings.BASE_DIR 没定义，就直接存 metadata 里的路径，视具体配置而定
+    rel_file_path = metadata["file_path"]
+    rel_thumb_path = metadata["thumbnail_path"]
+    
+    # 尝试转为相对路径存储
+    if os.path.isabs(rel_file_path):
+        rel_file_path = os.path.relpath(metadata["file_path"], os.getcwd())
+    if os.path.isabs(rel_thumb_path):
+        rel_thumb_path = os.path.relpath(metadata["thumbnail_path"], os.getcwd())
+
     new_image = Image(
         user_id=current_user.id,
         filename=metadata["filename"],
-        # 简单处理路径，实际可视需求调整
-        file_path=os.path.relpath(metadata["file_path"], start=settings.BASE_DIR) if hasattr(settings, 'BASE_DIR') else metadata["file_path"],
-        thumbnail_path=os.path.relpath(metadata["thumbnail_path"], start=settings.BASE_DIR) if hasattr(settings, 'BASE_DIR') else metadata["thumbnail_path"],
+        file_path=rel_file_path,
+        thumbnail_path=rel_thumb_path,
         resolution=metadata["resolution"],
         capture_time=metadata["capture_time"],
         location=metadata["location"]
     )
     
-    # 修正相对路径
-    if os.path.isabs(new_image.file_path):
-         new_image.file_path = os.path.relpath(metadata["file_path"], os.getcwd())
-         new_image.thumbnail_path = os.path.relpath(metadata["thumbnail_path"], os.getcwd())
-
     db.add(new_image)
     await db.commit()
     
@@ -68,17 +73,18 @@ async def upload_image(
                 await db.commit()
                 await db.refresh(tag)
             
-            # 此时访问 new_image.tags 是安全的，因为上面已经 refresh 且预加载了
+            # 此时访问 new_image.tags 是安全的
             if tag not in new_image.tags:
                 new_image.tags.append(tag)
         
         await db.commit()
 
     # 4. 添加后台 AI 分析任务
+    # 注意：这里传给 Service 的最好是绝对路径，确保 AI 库能读取到文件
     background_tasks.add_task(
         background_ai_analysis, 
         new_image.id, 
-        metadata["file_path"] # 传绝对路径给 AI 读取
+        metadata["file_path"] 
     )
 
     return {"msg": "Upload success", "id": new_image.id, "url": new_image.thumbnail_path}
@@ -103,7 +109,7 @@ async def batch_delete_images(
     await db.commit()
     return {"message": f"Successfully deleted {count} images"}
 
-# --- 图片列表查询 ---
+# --- 图片列表查询 (首页瀑布流) ---
 @router.get("/", response_model=List[ImageResponse])
 async def get_images(
     tag: Optional[str] = None,
@@ -120,24 +126,30 @@ async def get_images(
         .options(selectinload(Image.tags))
     )
     
+    # 筛选
     if tag:
         stmt = stmt.join(Image.tags).where(Tag.name.contains(tag))
-    
     if start_date:
         stmt = stmt.where(Image.upload_time >= start_date)
     if end_date:
         stmt = stmt.where(Image.upload_time <= end_date)
 
-    # 【核心修改】
-    # 原来: stmt = stmt.order_by(Image.upload_time.desc()).offset(skip).limit(limit)
-    # 修改后: 增加 Image.id.desc() 作为第二排序条件
+    # 【核心修改】排序逻辑升级
+    # 1. 拍摄时间 (优先展示新拍的)
+    # 2. 上传时间 (没有拍摄时间时，按上传时间)
+    # 3. ID (定海神针，解决分页跳变)
     stmt = stmt.order_by(
-        Image.upload_time.desc(), 
+        Image.capture_time.desc(), 
+        Image.upload_time.desc(),
         Image.id.desc()
     ).offset(skip).limit(limit)
     
     result = await db.execute(stmt)
     return result.scalars().all()
+
+# ==========================================
+# 2. 具体资源路由 (/{image_id} 开头)
+# ==========================================
 
 # --- 手动触发 AI 分析 ---
 @router.post("/{image_id}/analyze")
@@ -258,7 +270,7 @@ async def update_image_info(
     if update_data.ai_description is not None:
         image.ai_description = update_data.ai_description
 
-    # 更新标签 (采用追加模式)
+    # 更新标签 (追加模式)
     if update_data.custom_tags is not None:
         for tag_name in update_data.custom_tags:
             tag_name = tag_name.strip()
@@ -270,7 +282,7 @@ async def update_image_info(
             if not tag:
                 tag = Tag(name=tag_name)
                 db.add(tag)
-                await db.commit() # 提交以获取 ID
+                await db.commit()
                 await db.refresh(tag)
             
             # 避免重复关联
@@ -298,7 +310,7 @@ async def background_ai_analysis(image_id: int, file_path: str):
             ai_result = await analyze_image_with_ai(file_path, settings.SILICONFLOW_API_KEY)
             
             if ai_result:
-                # 使用 selectinload 预加载 tags
+                # 重新查询并加载 tags
                 stmt = (
                     select(Image)
                     .options(selectinload(Image.tags))
