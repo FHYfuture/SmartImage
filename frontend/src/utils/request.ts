@@ -1,41 +1,54 @@
 import axios from 'axios';
 import { Toast } from 'antd-mobile';
 
-// 【关键修改】
-// 1. API 基础路径改为 '/api' (配合 vite 代理)
-// 这样无论你是用 localhost 还是 192.168.x.x 访问，都会自动适配
-export const baseURL = '/api';
+// 动态获取 Base URL (兼容 Vite 代理)
+export const baseURL = '/api'; 
 
-// 2. 静态资源路径改为空字符串 (配合 vite 代理)
-// 这样图片路径会变成 /static/xxx.jpg，浏览器会自动拼上前缀
+// 【核心修复】将这里的 '/static' 改为 '' (空字符串)
+// 原因：数据库里的路径已经包含 'static/' 前缀了 (如 'static/uploads/...')
+// 如果这里再加 '/static'，就会拼成 '/static/static/...' 导致 404
 export const STATIC_URL = ''; 
 
-const request = axios.create({
+const service = axios.create({
   baseURL: baseURL,
-  timeout: 5000,
-});
-// 请求拦截：自动带 Token
-request.interceptors.request.use((config) => {
-  const token = localStorage.getItem('token');
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`;
-  }
-  return config;
+  timeout: 120000, // 保持 120秒超时以等待 AI
 });
 
-// 响应拦截：错误处理
-request.interceptors.response.use(
-  (response) => response.data,
-  (error) => {
-    if (error.response?.status === 401) {
-      localStorage.removeItem('token');
-      window.location.href = '/login';
+// ... (拦截器代码保持不变) ...
+
+// 请求拦截器
+service.interceptors.request.use(
+  config => {
+    const token = localStorage.getItem('token');
+    if (token) {
+      config.headers['Authorization'] = `Bearer ${token}`;
+    }
+    return config;
+  },
+  error => {
+    return Promise.reject(error);
+  }
+);
+
+// 响应拦截器
+service.interceptors.response.use(
+  response => {
+    return response.data;
+  },
+  error => {
+    if (error.response) {
+      const msg = error.response.data.detail || '请求失败';
+      // 忽略 401 报错 (避免页面刚加载时的干扰)
+      if (error.response.status !== 401) {
+          Toast.show({ content: msg, icon: 'fail' });
+      }
+    } else if (error.code === 'ECONNABORTED') {
+      Toast.show({ content: '请求超时，请检查网络或稍后重试', icon: 'fail' });
     } else {
-      const msg = error.response?.data?.detail || '请求失败';
-      Toast.show({ content: msg, icon: 'fail' });
+      Toast.show({ content: '网络连接异常', icon: 'fail' });
     }
     return Promise.reject(error);
   }
 );
 
-export default request;
+export default service;

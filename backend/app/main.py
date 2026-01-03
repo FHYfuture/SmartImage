@@ -2,11 +2,11 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
-from app.routers import auth, images
+
 from app.db.database import engine
 from app.db.base import Base  # 确保导入了刚才建立的 Base
 from app.core.config import settings
-
+from app.routers import auth, images, ai_chat
 # --- 新的 Lifespan (生命周期) 定义 ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -51,6 +51,7 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 # 注册路由
 app.include_router(auth.router, prefix="/api/auth", tags=["Auth"])
 app.include_router(images.router, prefix="/api/images", tags=["Images"])
+app.include_router(ai_chat.router, prefix="/api/chat", tags=["AI Chat"])
 
 @app.get("/")
 def read_root():

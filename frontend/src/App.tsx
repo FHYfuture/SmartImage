@@ -2,7 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import Auth from './pages/Auth';
 import AppLayout from './components/AppLayout';
 import Home from './pages/Home';
-import AI from './pages/AI';
+import AI from './pages/AiAssistant';
 import Profile from './pages/Profile';
 import Detail from './pages/Detail';
 

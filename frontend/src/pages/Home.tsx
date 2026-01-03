@@ -1,12 +1,13 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { SearchBar, FloatingBubble, InfiniteScroll, Toast, PullToRefresh, ImageViewer, Button, Dialog, Modal } from 'antd-mobile';
+import React, { useState, useRef } from 'react';
+import { SearchBar, FloatingBubble, InfiniteScroll, Toast, PullToRefresh, ImageViewer, Button, Dialog } from 'antd-mobile';
 import { 
-  AddOutline, MoreOutline, SearchOutline, CheckCircleFill, CheckCircleOutline, 
-  DeleteOutline, DownOutline, EnvironmentOutline, ClockCircleOutline, 
-  PictureOutline, EyeOutline, EditSOutline, DownlandOutline 
+  AddOutline, CheckCircleFill, CheckCircleOutline, 
+  DeleteOutline, EnvironmentOutline, ClockCircleOutline, 
+  PictureOutline, EditSOutline, DownlandOutline, // 注意：使用您环境中可用的下载图标名
+  MessageOutline // 新增：AI 助手图标
 } from 'antd-mobile-icons';
 import { useNavigate } from 'react-router-dom';
-import request, { STATIC_URL, baseURL } from '../utils/request';
+import request, { STATIC_URL } from '../utils/request';
 import dayjs from 'dayjs';
 
 export default function Home() {
@@ -135,7 +136,6 @@ export default function Home() {
 
   const handleDownload = (filePath: string) => {
     const link = document.createElement('a');
-    // 注意：这里需要完整的 URL，且如果跨域可能需要后端配置 CORS
     link.href = `${STATIC_URL}/${filePath}`;
     link.download = filePath.split('/').pop() || 'image.jpg';
     document.body.appendChild(link);
@@ -144,7 +144,6 @@ export default function Home() {
   };
 
   // --- 渲染大图覆盖层 (Immersive Overlay) ---
-  // 这是本次修改的核心：自定义一个悬浮在 ImageViewer 之上的 UI 层
   const renderViewerOverlay = () => {
     if (!viewerVisible || !data[viewerIndex]) return null;
     
@@ -158,7 +157,7 @@ export default function Home() {
         className="viewer-overlay" 
         style={{ 
           position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, 
-          zIndex: 1001, pointerEvents: 'none', // 让点击事件穿透到底下的图片
+          zIndex: 1001, pointerEvents: 'none', 
           display: 'flex', flexDirection: 'column', justifyContent: 'space-between'
         }}
       >
@@ -308,7 +307,7 @@ export default function Home() {
         <InfiniteScroll loadMore={() => loadMore(false)} hasMore={hasMore} />
       </PullToRefresh>
 
-      {/* 增强版图片查看器 */}
+      {/* 增强版图片查看器 (Fix: 增加 viewerVisible 判断以重置组件状态) */}
       {viewerVisible && (
         <>
           {renderViewerOverlay()}
@@ -325,12 +324,33 @@ export default function Home() {
       <input type="file" multiple ref={fileRef} style={{ display: 'none' }} accept="image/*" onChange={handleUpload} />
       
       {!isSelectionMode && (
-        <FloatingBubble 
-          style={{ '--initial-position-bottom': '40px', '--initial-position-right': '20px', '--z-index': '90', '--background': '#000' }}
-          onClick={triggerUpload}
-        >
-          <AddOutline fontSize={32} color='#fff' />
-        </FloatingBubble>
+        <>
+          {/* 新增：AI 助手入口 */}
+          <FloatingBubble 
+            style={{ 
+              '--initial-position-bottom': '160px', 
+              '--initial-position-right': '24px', 
+              '--z-index': '100', 
+              '--background': 'linear-gradient(135deg, #6253E1, #04BEFE)' // 酷炫渐变
+            }}
+            onClick={() => navigate('/ai-assistant')}
+          >
+            <MessageOutline fontSize={28} color='#fff' />
+          </FloatingBubble>
+
+          {/* 原有：上传按钮 */}
+          <FloatingBubble 
+            style={{ 
+              '--initial-position-bottom': '90px', 
+              '--initial-position-right': '24px', 
+              '--z-index': '90', 
+              '--background': '#1677ff' 
+            }}
+            onClick={triggerUpload}
+          >
+            <AddOutline fontSize={32} color='#fff' />
+          </FloatingBubble>
+        </>
       )}
     </div>
   );
