@@ -1,20 +1,27 @@
-from pydantic_settings import BaseSettings
-from typing import Optional
+import os
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
-    PROJECT_NAME: str
-    API_V1_STR: str
-    SECRET_KEY: str
-    ALGORITHM: str
-    ACCESS_TOKEN_EXPIRE_MINUTES: int
-    DATABASE_URL: str
-    SILICONFLOW_API_KEY: Optional[str] = None
+    # 项目基础配置
+    PROJECT_NAME: str = "Smart Picture Manager"
+    API_V1_STR: str = "/api"
     
-    # 图片存储路径
-    UPLOAD_DIR: str = "static/uploads"
-    THUMBNAIL_DIR: str = "static/thumbnails"
+    # 存储路径配置
+    BASE_DIR: str = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    UPLOAD_DIR: str = os.path.join(BASE_DIR, "static", "uploads")
+    THUMBNAIL_DIR: str = os.path.join(BASE_DIR, "static", "thumbnails")
 
-    class Config:
-        env_file = ".env"
+    # 数据库与安全
+    DATABASE_URL: str = ""
+    SECRET_KEY: str = ""
+    ALGORITHM: str = "HS256"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440
+
+    # --- 外部 API 密钥 (自动读取 .env) ---
+    SILICONFLOW_API_KEY: str = ""
+    AMAP_KEY: str = ""  # <--- 必须添加这行，名字要和 .env 里的一样
+
+    # 配置读取 .env 文件
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 settings = Settings()

@@ -14,7 +14,7 @@ interface Message {
 export default function AiAssistant() {
   const navigate = useNavigate();
   const [messages, setMessages] = useState<Message[]>([
-    { role: 'assistant', content: '你好！我是你的智能相册助手。你可以让我帮你找图片，比如：“找一下去年在杭州拍的照片”' }
+    { role: 'assistant', content: '你好！我是你的智能相册助手。你可以让我帮你找图片，比如：“找一下2025年10月的照片”' }
   ]);
   const [inputValue, setInputValue] = useState('');
   const [loading, setLoading] = useState(false);
